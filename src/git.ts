@@ -32,6 +32,16 @@ async function repoRoot(git: Git, dir: string): Promise<string> {
 	}
 }
 
+/** The ssh command `mod install --account` fetches with: only an enabled account with an SSH key. */
+export function gitSshResolver(get: (name: string) => Promise<Account>, dataDir: string, sshAs = SSH_AS) {
+	return async (name: string): Promise<string> => {
+		const account = await get(name);
+		if (account.disabled) throw new Error(`Account "${account.name}" is disabled`);
+		if (account.publicKey === undefined) throw new Error(`Account "${account.name}" has no SSH key`);
+		return sshCommand(dataDir, account.name, sshAs);
+	};
+}
+
 /** Makes git in the repository at `dir` push and pull as `account` and commit under its name. */
 export async function useAccount(git: Git, dir: string, account: Account, dataDir: string, sshAs = SSH_AS): Promise<string> {
 	const root = await repoRoot(git, path.resolve(dir));

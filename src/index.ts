@@ -1,5 +1,6 @@
 import type {ModulePlugin} from '../../../src/api.js';
 import {createCommand} from './commands.js';
+import {gitSshResolver} from './git.js';
 import {createKinds} from './kinds.js';
 import {noopLog} from './log.js';
 import {createStore} from './store.js';
@@ -27,6 +28,7 @@ const plugin: ModulePlugin = host => {
 		);
 	refresh();
 	log.addRedactor(text => redactSecrets(redactPrivateKeys(text)));
+	host.registerGitSsh?.(gitSshResolver(name => store.get(name), host.dataDir));
 	return [createCommand({dataDir: host.dataDir, store, kinds: createKinds(host.dataDir), log, onSecretsChanged: refresh})];
 };
 

@@ -3,7 +3,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import {chmod, mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {test} from 'node:test';
-import {accountOf, runGit, SSH_AS, sshCommand, unuseAccount, useAccount} from '../src/git.js';
+import {accountOf, gitSshResolver, runGit, SSH_AS, sshCommand, unuseAccount, useAccount} from '../src/git.js';
 import {createStore} from '../src/store.js';
 import {github, tmp} from './helpers.js';
 
@@ -76,4 +76,23 @@ test('ssh-as refuses a disabled, missing or malformed account', async () => {
 	r = await sshAs(data, '../x');
 	assert.equal(r.status, 1);
 	assert.match(r.stderr, /invalid account name/);
+});
+
+test('mod install --account gets the ssh command only for an enabled account with a key', async () => {
+	const base = {kind: 'github', fields: {}, createdAt: 0};
+	const accounts: Record<string, Parameters<typeof useAccount>[2]> = {
+		bot: {...base, name: 'bot', publicKey: 'ssh-ed25519 AAAA', disabled: false},
+		off: {...base, name: 'off', publicKey: 'ssh-ed25519 AAAA', disabled: true},
+		nokey: {...base, name: 'nokey', disabled: false},
+	};
+	const get = async (name: string) => {
+		const a = accounts[name];
+		if (!a) throw new Error(`Account "${name}" does not exist. See: account list`);
+		return a;
+	};
+	const resolve = gitSshResolver(get, '/d/acc', '/m/bin/ssh-as');
+	assert.equal(await resolve('bot'), sshCommand('/d/acc', 'bot', '/m/bin/ssh-as'));
+	await assert.rejects(resolve('off'), /disabled/);
+	await assert.rejects(resolve('nokey'), /no SSH key/);
+	await assert.rejects(resolve('ghost'), /does not exist/);
 });

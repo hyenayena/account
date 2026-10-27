@@ -53,6 +53,10 @@ Add `"account": "account"` to `dependencies`, re-export what you use from `src/d
 - `secretDirsFor(ownDataDir)`: the directories that hold credentials, for a policy that guards an assistant.
 - `accountDataDirFor(ownDataDir)`: this module's data dir; only account knows the layout.
 
+## Private modules
+
+At load the plugin registers a resolver with the host (`host.registerGitSsh`, hosts that have it): `mod install --account <name> <module>…` then fetches over ssh with `GIT_SSH_COMMAND` set to the same `bin/ssh-as` wrapper `account use` writes (`git.ts` `gitSshResolver`). The account must exist, be enabled and have an SSH key with read access to the repository; the host keeps the account name in `yena-modules.json` for restores and updates. The container has no host ssh-agent, so this is how private modules are installed (the official ones are public and need no account).
+
 ## How secrets stay blind
 
 - Secrets are typed into core's `SecretInput` (the value lives in a ref and is never rendered) and written straight to `secrets/<name>.json`. No command takes a secret as an argument, and no command prints one.
@@ -90,7 +94,7 @@ None.
 
 ## Layout
 
-`src/`: `index.ts` (plugin, redactors), `commands.ts` (the `account` command, the settings tab), `kinds.ts` (built-in and own kinds), `store.ts` (accounts, secrets, keys), `git.ts` (`use`, `unuse`, `which`), `public.ts` (entry for other modules), `ui/secret-view.tsx` and `ui/kit.ts` (adapter to core's kit). `bin/ssh-as`. Tests: `tests/{store,kinds,git,commands,public}.test.ts`.
+`src/`: `index.ts` (plugin, redactors), `commands.ts` (the `account` command, the settings tab), `kinds.ts` (built-in and own kinds), `store.ts` (accounts, secrets, keys), `git.ts` (`use`, `unuse`, `which`, the `mod install --account` resolver), `public.ts` (entry for other modules), `ui/secret-view.tsx` and `ui/kit.ts` (adapter to core's kit). `bin/ssh-as`. Tests: `tests/{store,kinds,git,commands,public}.test.ts`.
 
 ## Development
 
