@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
-import {chmod, mkdir, writeFile} from 'node:fs/promises';
+import {once} from 'node:events';
+import {chmod, mkdir, rm, writeFile} from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import {test} from 'node:test';
+import {agentDirFor} from '../src/agent.js';
 import {accountOf, gitSshResolver, runGit, SSH_AS, sshCommand, unuseAccount, useAccount} from '../src/git.js';
 import {createStore} from '../src/store.js';
 import {github, tmp} from './helpers.js';
@@ -72,7 +75,7 @@ test('ssh-as refuses a disabled, missing or malformed account', async () => {
 	assert.match(r.stderr, /is disabled/);
 	r = await sshAs(data, 'ghost');
 	assert.equal(r.status, 1);
-	assert.match(r.stderr, /does not exist/);
+	assert.match(r.stderr, /has no usable SSH key/);
 	r = await sshAs(data, '../x');
 	assert.equal(r.status, 1);
 	assert.match(r.stderr, /invalid account name/);
@@ -95,4 +98,21 @@ test('mod install --account gets the ssh command only for an enabled account wit
 	await assert.rejects(resolve('off'), /disabled/);
 	await assert.rejects(resolve('nokey'), /no SSH key/);
 	await assert.rejects(resolve('ghost'), /does not exist/);
+});
+
+test('ssh-as signs through the account agent where the key cannot be read', async () => {
+	const data = await tmp();
+	const dir = agentDirFor(data);
+	await mkdir(dir, {recursive: true, mode: 0o700});
+	const socket = path.join(dir, 'yena.sock');
+	const server = net.createServer().listen(socket);
+	await once(server, 'listening');
+	try {
+		const r = await sshAs(data, 'yena');
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.stdout.trim(), `-o IdentityAgent=${socket} -o StrictHostKeyChecking=accept-new git@github.com git-upload-pack`);
+	} finally {
+		server.close();
+		await rm(dir, {recursive: true, force: true});
+	}
 });

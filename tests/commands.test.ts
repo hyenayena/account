@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {test} from 'node:test';
 import type {Command, CommandContext, MountControl, MountOptions, SettingsTab} from '../../../src/api.js';
-import plugin, {redactPrivateKeys, redactValues} from '../src/index.js';
+import {createPlugin, redactPrivateKeys, redactValues} from '../src/index.js';
 import {makeCtx, tmp} from './helpers.js';
+
+const plugin = createPlugin({agents: false});
 
 const load = async (dataDir: string): Promise<Command> => {
 	const commands = await plugin({dataDir, events: {emit() {}, on: () => () => {}}, log: undefined as never});

@@ -61,6 +61,7 @@ At load the plugin registers a resolver with the host (`host.registerGitSsh`, ho
 
 - Secrets are typed into core's `SecretInput` (the value lives in a ref and is never rendered) and written straight to `secrets/<name>.json`. No command takes a secret as an argument, and no command prints one.
 - SSH private keys are written by `ssh-keygen` straight into `keys/` and never read by yena's code; git uses them through `bin/ssh-as` (`ssh -i <key> -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new`), so the user's own ssh-agent is never involved and `.git/config` holds only the wrapper and the account name.
+- Each enabled account with a key gets its own `ssh-agent`, started by the plugin and brought in line after every add, disable, enable and remove (`src/agent.ts`; the agent of a disabled or removed account is killed). `bin/ssh-as` uses the key file where it can read it (yena itself, `mod install --account`) and the account's agent where it cannot (the claude chat's Bash sandbox, which hides `keys/`), so plain `git push` works from the chat while the key never leaves yena. The agents get only `PATH` from yena's environment.
 - A log redactor replaces private key blocks with `[private key]` and every stored secret value of 6 or more characters with `[secret]` (refreshed when a secret changes). Log records carry no names, fields or values.
 - The claude chat lets its Read, Glob, Grep and Edit tools reach only the project, the md hub and its config dir, so this data dir is out of their reach. Its Bash check only names `accounts.json`; see the risks.
 
@@ -77,24 +78,27 @@ Under `<YENA_DATA>/account` (dir 0700; files 0600, written atomically):
 - `keys/` (0700): `<name>` (private key), `<name>.pub`, `<name>.disabled` (marker `ssh-as` checks).
 - `disabled/<name>`: marker of a disabled account.
 
+Outside it, on tmpfs (unix sockets may not work on a folder mounted from the host): `/tmp/yena-account-<uid>-<12 hex of sha256(data dir)>/` (0700) with `<name>.sock` and `<name>.pid` of each agent; `bin/ssh-as` builds the same path.
+
 ## Events
 
 None.
 
 ## Dependencies
 
-`core` (its kit's `SecretInput`, loaded only by `account secret`). Needs `ssh`, `ssh-keygen` and `git` on `PATH` (in the yena image).
+`core` (its kit's `SecretInput`, loaded only by `account secret`). Needs `ssh`, `ssh-keygen`, `ssh-agent`, `ssh-add`, `sha256sum` and `git` on `PATH` (in the yena image).
 
 ## Limits and known risks
 
 - The assistant runs as root in the same container: the files are protected by the chat's policy, not by the operating system. The chat's Bash check does not name `secrets/` and `keys/` yet, so a shell command that reads them is not stopped (the fix belongs in the claude module, through `secretDirsFor`). Full isolation needs the secrets outside the container (planned).
+- Anything that can reach an agent socket can sign as that account (never read the key): in the container that is yena, and the chat's Bash, whose sandbox allows unix sockets for this. Disable an account to take its agent away.
 - A module that receives a secret through `secret()` holds it in memory; what it does with it is up to that module.
 - `bin/ssh-as` is referenced by its absolute path in each repository's `.git/config`: moving the module breaks `git push` there until `account use` runs again. Only ssh remotes use the account; `https://` remotes keep the user's own credentials. `StrictHostKeyChecking=accept-new` trusts a host key on first use.
 - Two yena processes changing accounts at the same moment can lose one change (each write is atomic, read-modify-write is not).
 
 ## Layout
 
-`src/`: `index.ts` (plugin, redactors), `commands.ts` (the `account` command, the settings tab), `kinds.ts` (built-in and own kinds), `store.ts` (accounts, secrets, keys), `git.ts` (`use`, `unuse`, `which`, the `mod install --account` resolver), `public.ts` (entry for other modules), `ui/secret-view.tsx` and `ui/kit.ts` (adapter to core's kit). `bin/ssh-as`. Tests: `tests/{store,kinds,git,commands,public}.test.ts`.
+`src/`: `index.ts` (plugin, redactors), `commands.ts` (the `account` command, the settings tab), `kinds.ts` (built-in and own kinds), `store.ts` (accounts, secrets, keys), `git.ts` (`use`, `unuse`, `which`, the `mod install --account` resolver), `agent.ts` (the ssh-agents), `public.ts` (entry for other modules), `ui/secret-view.tsx` and `ui/kit.ts` (adapter to core's kit). `bin/ssh-as`. Tests: `tests/{store,kinds,git,agent,commands,public}.test.ts` (`agent.test.ts` also runs the real `ssh-agent`). Tests that load the plugin use `createPlugin({agents: false})`.
 
 ## Development
 
