@@ -42,7 +42,7 @@ const NO_KEYS = 1;
 /**
  * ssh config for the agents. Claude Code's Bash sandbox sets its own GIT_SSH_COMMAND (ssh through its
  * proxy), which wins over a repository's core.sshCommand, so ssh-as never runs there; this config, included
- * by the image's /etc/ssh/ssh_config.d/yena-account.conf, picks the agent of the repository's account
+ * by the image's /etc/ssh/ssh_config (not ssh_config.d, which the sandbox hides), picks the agent of the repository's account
  * instead. It lives in the data dir because the sandbox cannot write there (a planted ProxyCommand would
  * run outside it). Command-line options win, so ssh-as with its key file is unaffected.
  */
