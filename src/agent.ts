@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {lstatSync, readFileSync} from 'node:fs';
-import {mkdir, readdir, rm, writeFile} from 'node:fs/promises';
+import {mkdir, readdir, rename, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {checkName, type Account} from './store.js';
 
@@ -39,7 +39,19 @@ export type Agents = {
 // ssh-add -l: 0 holds keys, 1 holds none, 2 cannot reach the agent.
 const NO_KEYS = 1;
 
-export function createAgents(opts: {dir: string; keyPath: (name: string) => string; run?: AgentRun; kill?: (pid: number) => void}): Agents {
+/**
+ * ssh config for the agents. Claude Code's Bash sandbox sets its own GIT_SSH_COMMAND (ssh through its
+ * proxy), which wins over a repository's core.sshCommand, so ssh-as never runs there; this config, included
+ * by the image's /etc/ssh/ssh_config.d/yena-account.conf, picks the agent of the repository's account
+ * instead. It lives in the data dir because the sandbox cannot write there (a planted ProxyCommand would
+ * run outside it). Command-line options win, so ssh-as with its key file is unaffected.
+ */
+export function sshConfigFor(accounts: {name: string; socket: string}[]): string {
+	const head = '# Written by yena (account module): a repository that uses an account signs through its ssh-agent.\n';
+	return head + accounts.map(a => `Match exec "git config --get yena.account | grep -qx ${checkName(a.name)}"\n\tIdentityAgent ${a.socket}\n`).join('');
+}
+
+export function createAgents(opts: {dir: string; configFile?: string; keyPath: (name: string) => string; run?: AgentRun; kill?: (pid: number) => void}): Agents {
 	const dir = opts.dir;
 	const run = opts.run ?? runAgentTool;
 	const kill = opts.kill ?? killAgent;
@@ -97,6 +109,13 @@ export function createAgents(opts: {dir: string; keyPath: (name: string) => stri
 			}
 			const failed: string[] = [];
 			for (const a of usable) await ensure(a).catch(() => failed.push(a.name));
+			if (opts.configFile) {
+				const live = usable.filter(a => !failed.includes(a.name)).map(a => ({name: a.name, socket: socketOf(a.name)}));
+				await mkdir(path.dirname(opts.configFile), {recursive: true, mode: 0o700});
+				const tmp = `${opts.configFile}.${process.pid}.tmp`;
+				await writeFile(tmp, sshConfigFor(live), {mode: 0o644});
+				await rename(tmp, opts.configFile);
+			}
 			if (failed.length > 0) throw new Error(`ssh-agent could not be started for ${failed.length} account(s)`);
 		},
 	};

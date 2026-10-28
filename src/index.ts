@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type {Logger, ModulePlugin} from '../../../src/api.js';
 import {agentDirFor, createAgents, type Agents} from './agent.js';
 import {createCommand} from './commands.js';
@@ -43,7 +44,7 @@ export function createPlugin(opts: {agents?: boolean} = {}): ModulePlugin {
 	return host => {
 		const log = host.log ?? noopLog;
 		const raw = createStore(host.dataDir);
-		const store = opts.agents === false ? raw : withAgents(raw, createAgents({dir: agentDirFor(host.dataDir), keyPath: name => raw.keyPath(name)}), log);
+		const store = opts.agents === false ? raw : withAgents(raw, createAgents({dir: agentDirFor(host.dataDir), configFile: path.join(host.dataDir, 'ssh_config'), keyPath: name => raw.keyPath(name)}), log);
 		let redactSecrets = redactValues([]);
 		const refresh = () =>
 			void store.allSecretValues().then(
