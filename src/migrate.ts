@@ -10,7 +10,6 @@ const STALE_MS = 2 * 60_000;
 
 const errClass = (error: unknown) => (error instanceof Error ? error.constructor.name : typeof error);
 
-/** Runs `fn` under `vault/migrate.lock`; undefined when another process holds it (a lock older than 2 minutes is stale). */
 async function withLock<T>(store: Store, fn: () => Promise<T>): Promise<T | undefined> {
 	await mkdir(store.vault.dir, {recursive: true, mode: 0o700});
 	if (!(await lstat(store.vault.dir)).isDirectory()) throw new Error('The account vault folder is not a directory');
@@ -36,7 +35,6 @@ async function withLock<T>(store: Store, fn: () => Promise<T>): Promise<T | unde
 
 const busy = () => new Error('Another yena process is changing the account vault; try again in a moment');
 
-/** Encrypts a secrets file's plaintext fields (and, with `kid`, re-encrypts envelopes under another key); verified before it replaces the file. */
 async function rewriteSecrets(store: Store, name: string, entries: Map<string, SecretEntry>, kid?: number): Promise<boolean> {
 	const needs = [...entries.values()].some(e => e.state === 'plain' || (kid !== undefined && e.state === 'encrypted' && e.envelope.kid !== kid));
 	if (!needs) return false;
@@ -55,7 +53,6 @@ async function rewriteSecrets(store: Store, name: string, entries: Map<string, S
 	return true;
 }
 
-/** Moves a plaintext private key into `<name>.enc`; an `.enc` left by an interrupted run is checked against it first. */
 async function migrateKey(store: Store, name: string, encrypted: boolean): Promise<void> {
 	const plain = await store.files.readPlainKey(name);
 	if (!plain) return;
@@ -70,14 +67,9 @@ async function migrateKey(store: Store, name: string, encrypted: boolean): Promi
 	} finally {
 		plain.fill(0);
 	}
-	// Not a secure wipe: the old blocks stay on the disk until they are reused.
 	await store.files.removePlainKey(name);
 }
 
-/**
- * Encrypts what 0.5.0 stored in plaintext: idempotent (encrypted files are skipped) and resumable. Until an
- * entry is migrated it is read as plaintext. Logs counts only.
- */
 export async function migrate(store: Store, log: Logger = noopLog): Promise<{secrets: number; keys: number; failed: number} | undefined> {
 	let step = 'lock';
 	try {
@@ -118,7 +110,6 @@ export async function migrate(store: Store, log: Logger = noopLog): Promise<{sec
 
 export type Inventory = {encrypted: number; plaintext: number; undecryptable: number};
 
-/** Counts of stored secret fields and SSH keys by state; decrypts in memory to tell. */
 export async function inventory(store: Store): Promise<Inventory> {
 	const counts: Inventory = {encrypted: 0, plaintext: 0, undecryptable: 0};
 	for (const name of await store.files.secretFiles()) {
@@ -140,10 +131,6 @@ export async function inventory(store: Store): Promise<Inventory> {
 	return counts;
 }
 
-/**
- * A new vault key; every secret and SSH key is re-encrypted under it (verified), and the old key is dropped
- * only when all succeeded. Run again after an interruption: it resumes with the same new key.
- */
 export async function rotate(store: Store, log: Logger = noopLog): Promise<{kid: number; secrets: number; keys: number}> {
 	const result = await withLock(store, async () => {
 		const kid = await store.vault.beginRotation();
@@ -187,10 +174,6 @@ export async function rotate(store: Store, log: Logger = noopLog): Promise<{kid:
 	return result;
 }
 
-/**
- * Drops what cannot be decrypted (secret fields, SSH keys with their public half) and makes a new key when
- * none is usable. What is readable stays.
- */
 export async function reset(store: Store, log: Logger = noopLog): Promise<{secrets: number; keys: number; newKey: boolean}> {
 	const result = await withLock(store, async () => {
 		let secrets = 0;

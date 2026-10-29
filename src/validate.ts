@@ -2,7 +2,6 @@ import type {Kind} from './kinds.js';
 
 export const MAX_SECRET = 8192;
 export const MAX_LOGIN = 64 * 1024;
-// Shorter leaves of a login blob are ids and flags, not credentials, and would cut ordinary words out of logs.
 const MIN_LEAF = 16;
 const MAX_DEPTH = 8;
 
@@ -28,11 +27,9 @@ function isLogin(value: string): boolean {
 	return typeof blob.primaryApiKey === 'string' && blob.primaryApiKey !== '';
 }
 
-/** The size cap of a secret field; a Claude Code login blob is larger than any typed secret. */
 export const maxSecretOf = (kind: Kind | undefined, field: string): number =>
 	kind?.fields.find(f => f.key === field)?.check === 'claude-login' ? MAX_LOGIN : MAX_SECRET;
 
-/** Throws when the value cannot be the field's secret. Messages never contain the value. */
 export function checkSecret(kind: Kind | undefined, field: string, value: string): void {
 	const check = kind?.fields.find(f => f.key === field)?.check;
 	if (check === 'claude-login') {
@@ -46,10 +43,8 @@ export function checkSecret(kind: Kind | undefined, field: string, value: string
 	if (check === 'anthropic-token' && !ANTHROPIC_TOKEN.test(value)) throw new Error('Not an Anthropic subscription token (sk-ant-oat…)');
 }
 
-// A login keeps its owner's email beside the tokens; redacting it would hide the account everywhere it is shown.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** For a value that is a JSON object: every string leaf long enough to be a credential (not an email), for the log redactor. */
 export function secretLeaves(value: string): string[] {
 	const root = parseObject(value);
 	if (!root) return [];

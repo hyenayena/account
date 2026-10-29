@@ -5,11 +5,9 @@ import {checkSecret, MAX_LOGIN, maxSecretOf, secretLeaves} from '../src/validate
 import {stripe} from './helpers.js';
 
 const kind = (name: string) => BUILTIN_KINDS.find(k => k.name === name)!;
-// Generated shapes, not real credentials.
 const fakeKey = 'sk-ant-api03-' + 'A1b2_-'.repeat(8);
 const fakeToken = 'sk-ant-oat01-' + 'Z9y8_-'.repeat(8);
 
-/** Throws through `checkSecret` and checks that the message does not carry the value. */
 function refused(k: string, field: string, value: string, message: RegExp) {
 	assert.throws(
 		() => checkSecret(kind(k), field, value),

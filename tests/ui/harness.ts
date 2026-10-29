@@ -4,7 +4,6 @@ import type {ReactElement} from 'react';
 
 export const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-/** Renders into fake TTY streams; `press` types, `frames` is everything drawn. */
 export function mount(element: ReactElement, size = {columns: 80, rows: 30}) {
 	const stdin = Object.assign(new PassThrough(), {isTTY: true, setRawMode: () => stdin, ref() {}, unref() {}});
 	const stdout = Object.assign(new PassThrough(), {isTTY: true, ...size});

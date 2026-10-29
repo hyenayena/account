@@ -17,10 +17,8 @@ const sshString = (data: Buffer | string): Buffer => {
 
 const publicBlob = (pub: Buffer): Buffer => Buffer.concat([sshString(KEY_TYPE), sshString(pub)]);
 
-/** `SHA256:<base64 without padding>` of a public key blob, as `ssh-keygen -l -E sha256` prints it. */
 export const fingerprintOfBlob = (blob: Buffer): string => `SHA256:${createHash('sha256').update(blob).digest('base64').replace(/=+$/, '')}`;
 
-/** The fingerprint of an `ssh-ed25519 <base64> [comment]` line. */
 export function fingerprintOf(publicLine: string): string {
 	const b64 = publicLine.trim().split(/\s+/)[1];
 	if (!b64) throw new Error('Not an SSH public key');
@@ -28,13 +26,11 @@ export function fingerprintOf(publicLine: string): string {
 }
 
 export type GeneratedKey = {
-	/** The private key in OpenSSH format (`openssh-key-v1`, unencrypted); the caller encrypts and wipes it. */
 	privateKey: Buffer;
 	publicKey: string;
 	fingerprint: string;
 };
 
-/** A new ed25519 key pair, built in memory: no file and no external tool is involved. */
 export function generateEd25519(comment: string): GeneratedKey {
 	const pair = generateKeyPairSync('ed25519');
 	const pub = Buffer.from(pair.publicKey.export({format: 'jwk'}).x ?? '', 'base64url');

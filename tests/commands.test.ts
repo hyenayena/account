@@ -25,7 +25,6 @@ const run = async (command: Command, line: string, extra: Partial<CommandContext
 
 type InputProps = {label: string; onSubmit: (v: string) => void; onCancel: () => void};
 
-// A mount that "types" into the hidden input by calling the element's handlers, as the UI would.
 function typing(answer: string | null) {
 	const seen: {label?: string; target?: string} = {};
 	const mount = (build: (c: MountControl) => object, options?: MountOptions) =>
@@ -209,7 +208,6 @@ test('the settings tab lists accounts as they are when it opens and manages them
 test('the "Add account…" row and "account new" open the step-by-step form in the panel', async () => {
 	const command = await load(await tmp());
 	const action = (command.settings as SettingsTab).actions![0]!;
-	// The form loads when the tab is read; until then opening it asks to press Enter again.
 	let element: object | undefined;
 	for (let i = 0; i < 100 && element === undefined; i++) {
 		try {
@@ -240,7 +238,6 @@ test('the log redactor cuts private key blocks and stored secret values', () => 
 	assert.equal(redact('a sk_live_abcdef_longer b sk_live_abcdef c abc'), 'a [secret] b [secret] c abc');
 });
 
-// Generated shapes, not real credentials.
 const FAKE_KEY = 'sk-ant-api03-' + 'Cmd7est_'.repeat(5);
 const ACCESS = 'sk-ant-oat01-' + 'L0ginAcc_'.repeat(5);
 

@@ -11,9 +11,7 @@ export type Deps = {
 	kinds: Kinds;
 	log: Logger;
 	grants?: Grants;
-	// What is installed, with each module's credentials declaration; absent in older hosts.
 	build?: BuildInfo;
-	// Called after a secret is saved, so the log redactor learns it.
 	onSecretsChanged?: () => void;
 	git?: Git;
 	sshAs?: string;
@@ -166,10 +164,8 @@ const USAGE = 'account <subcommand>';
 
 const clip = (s: string) => s.slice(0, 40);
 
-// Who makes the accounts of a kind whose secret only a module sets.
 const MADE_BY: Record<string, string> = {'claude-login': 'claude auth login'};
 
-/** `--kind x --login y` → {kind: 'x', fields: {login: 'y'}}; values are single words. */
 function parseFlags(words: string[], allowKind: boolean): {kind?: string; fields: Record<string, string>} {
 	const fields: Record<string, string> = {};
 	let kind: string | undefined;
@@ -247,13 +243,11 @@ export function createCommand(deps: Deps): Command {
 		return account;
 	};
 
-	// An account whose kind was removed by hand counts as complete: there is nothing to check it against.
 	const missingFor = async (a: Account): Promise<string[]> => {
 		const kind = await kinds.get(a.kind).catch(() => undefined);
 		return kind ? missingOf(kind, a, await store.secretNames(a.name)) : [];
 	};
 
-	// The settings screen builds its views synchronously, so the wizard is loaded when the tab is read.
 	let wizard: typeof import('./ui/add-wizard.js') | undefined;
 	const loadWizard = async () => (wizard ??= await import('./ui/add-wizard.js'));
 	const wizardDeps = {store, kinds, ...(deps.onSecretsChanged && {onSecretsChanged: deps.onSecretsChanged})};
@@ -280,7 +274,6 @@ export function createCommand(deps: Deps): Command {
 	}
 
 	async function changeGrants(sub: 'grant' | 'revoke', args: string[], ctx: CommandContext): Promise<void> {
-		// An assistant run carries a signal; the agent policy already denies these, this is the second lock.
 		if (ctx.signal) throw new Error(`"account ${sub}" is only for you to run in the console, never for an assistant`);
 		const [module, ...kindArgs] = args;
 		if (!module) throw new Error(`Specify the module. Usage: account ${sub} <module> [kind]…`);
@@ -352,7 +345,6 @@ export function createCommand(deps: Deps): Command {
 		args: [{name: 'subcommand', description: 'What to do; see the subcommands'}],
 		subcommands,
 		agent: 'confirm',
-		// A getter, so the settings screen lists the accounts as they are when it opens.
 		get settings() {
 			void loadWizard().catch(error => log.warn('account form failed to load', {err: error}));
 			return accountsTab(store, openWizard);

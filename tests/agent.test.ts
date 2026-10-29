@@ -12,7 +12,6 @@ import {github, tmp} from './helpers.js';
 const FAKE_KEY = 'fake key bytes';
 const HEADER = 'BEGIN OPENSSH PRIVATE KEY';
 
-/** Files under `dir` (recursively, unreadable ones skipped) whose content holds an OpenSSH private key header. */
 function filesWithKeys(dir: string, depth = 4): string[] {
 	const found: string[] = [];
 	let entries: Dirent[];
@@ -28,7 +27,6 @@ function filesWithKeys(dir: string, depth = 4): string[] {
 			try {
 				if (statSync(p).size < 1_000_000 && readFileSync(p, 'utf8').includes(HEADER)) found.push(p);
 			} catch {
-				// Not ours to read.
 			}
 		}
 	}
@@ -46,7 +44,6 @@ const account = (name: string, extra: Partial<Account> = {}): Account => ({
 	...extra,
 });
 
-// A fake ssh-agent/ssh-add: `agents` maps a socket to the fingerprints it holds; absent = unreachable.
 function fakeTools() {
 	const agents = new Map<string, string[]>();
 	const calls: string[] = [];

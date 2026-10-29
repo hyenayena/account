@@ -12,7 +12,6 @@ const VALUE = 'generated-test-value-0123456789';
 const keyText = async (dir: string) => readFile(path.join(dir, 'vault', 'key'), 'utf8');
 const keyB64 = async (dir: string) => (JSON.parse(await keyText(dir)) as {keys: {key: string}[]}).keys[0]!.key;
 
-/** Checks the error is the generic one: no value and no key in it. */
 const failsClosed = (key: string | undefined, re: RegExp) => (error: Error) => {
 	assert.match(error.message, re);
 	assert.ok(!error.message.includes(VALUE));

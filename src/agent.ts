@@ -5,22 +5,14 @@ import {mkdir, readdir, rename, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {checkName, type Account} from './store.js';
 
-/**
- * One ssh-agent per enabled account with a key: the key is stored encrypted, so git signs only through the
- * agent (`bin/ssh-as` and the ssh config below), in yena and in the chat's Bash sandbox. On tmpfs,
- * because unix sockets may not work on a folder mounted from the host; named after the data dir, so another
- * yena data dir (a test) never touches these agents. `bin/ssh-as` builds the same path.
- */
 export const agentDirFor = (dataDir: string, uid: number = process.getuid?.() ?? 0): string =>
 	`/tmp/yena-account-${uid}-${createHash('sha256').update(dataDir).digest('hex').slice(0, 12)}`;
 
 export type ToolResult = {code: number; stdout: string};
-/** `input` is written to the tool's stdin, which is then closed. */
 export type AgentRun = (file: string, args: string[], socket?: string, input?: Buffer) => Promise<ToolResult>;
 
 const TOOL_TIMEOUT_MS = 10_000;
 
-// Only PATH (and the agent socket for ssh-add): nothing from yena's environment reaches the agent.
 export const runAgentTool: AgentRun = (file, args, socket, input) =>
 	new Promise(resolve => {
 		const env: Record<string, string> = {PATH: process.env.PATH ?? '/usr/bin:/bin'};
@@ -34,21 +26,12 @@ export const runAgentTool: AgentRun = (file, args, socket, input) =>
 	});
 
 export type Agents = {
-	/** Starts or refreshes the agents of usable accounts and stops every other one. */
 	sync(accounts: Account[]): Promise<void>;
 	socketOf(name: string): string;
 };
 
-// ssh-add -l: 0 holds keys, 1 holds none, 2 cannot reach the agent.
 const NO_KEYS = 1;
 
-/**
- * ssh config for the agents. Claude Code's Bash sandbox sets its own GIT_SSH_COMMAND (ssh through its
- * proxy), which wins over a repository's core.sshCommand, so ssh-as never runs there; this config, included
- * by the image's /etc/ssh/ssh_config (not ssh_config.d, which the sandbox hides), picks the agent of the repository's account
- * instead. It lives in the data dir because the sandbox cannot write there (a planted ProxyCommand would
- * run outside it).
- */
 export function sshConfigFor(accounts: {name: string; socket: string}[]): string {
 	const head = '# Written by yena (account module): a repository that uses an account signs through its ssh-agent.\n';
 	return head + accounts.map(a => `Match exec "git config --get yena.account | grep -qx ${checkName(a.name)}"\n\tIdentityAgent ${a.socket}\n`).join('');
@@ -78,11 +61,9 @@ export function createAgents(opts: {dir: string; configFile?: string; privateKey
 			await start(account.name);
 			listed = {code: NO_KEYS, stdout: ''};
 		}
-		// A key of an account removed and created again under the same name is replaced.
 		const loaded = listed.code === 0 ? listed.stdout.trim().split('\n') : [];
 		if (loaded.length === 1 && account.fingerprint !== undefined && loaded[0]!.split(/\s+/)[1] === account.fingerprint) return;
 		if (listed.code === 0) await run('ssh-add', ['-D'], socket);
-		// "-" reads the key from stdin: decrypted, it exists only in memory, never as a file.
 		const key = await opts.privateKey(account.name);
 		let added: ToolResult;
 		try {
@@ -131,12 +112,10 @@ export function createAgents(opts: {dir: string; configFile?: string; privateKey
 	};
 }
 
-// Only an ssh-agent is killed: a pid file left from an earlier container may name another process now.
 function killAgent(pid: number): void {
 	try {
 		if (readFileSync(`/proc/${pid}/comm`, 'utf8').trim() !== 'ssh-agent') return;
 		process.kill(pid);
 	} catch {
-		// Already gone.
 	}
 }

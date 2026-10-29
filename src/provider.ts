@@ -22,11 +22,6 @@ class Missing extends Error {}
 
 const undeclared = (module: string, kind: string) => new Undeclared(`${module} did not declare credentials of kind "${kind.slice(0, 40)}" in yena.json`);
 
-/**
- * The credential store as other modules see it through `host.credentials`. Every call is checked against
- * the caller: effective access to a kind is the lower of what its yena.json declares and what the user
- * granted (`write` includes read, create and remove). Each call leaves one audit record, metadata only.
- */
 export function createProvider(deps: {store: Store; kinds: Kinds; grants: Grants; log: Logger; onSecretsChanged?: () => void}): CredentialProvider {
 	const {store, kinds, grants, log} = deps;
 
@@ -43,7 +38,6 @@ export function createProvider(deps: {store: Store; kinds: Kinds; grants: Grants
 		}
 	}
 
-	/** Refuses before the store is read when the caller may not do `need` with any kind at all. */
 	async function requireAny(caller: CredentialCaller, need: CredentialAccess): Promise<void> {
 		const declared = Object.keys(caller.declared);
 		if (declared.length === 0) throw new Undeclared(`${caller.module} did not declare any credentials in yena.json`);

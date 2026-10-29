@@ -3,7 +3,6 @@ import {constants as fsConstants} from 'node:fs';
 import {chmod, link, lstat, mkdir, open, rename, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
-/** An encrypted value: AES-256-GCM under the vault key `kid`, with a fresh 12-byte IV per write. */
 export type Envelope = {v: 1; kid: number; iv: string; ct: string; tag: string};
 
 type KeyEntry = {kid: number; key: Buffer};
@@ -31,7 +30,6 @@ const decryptError = (account: string): Error =>
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** Strict base64: what Buffer.from would silently accept with junk in it is refused. */
 function base64(text: unknown, bytes?: number): Buffer | undefined {
 	if (typeof text !== 'string') return undefined;
 	const buf = Buffer.from(text, 'base64');
@@ -65,15 +63,10 @@ function parseKeyFile(text: string): KeyFile | undefined {
 const keyFileText = (file: KeyFile): string =>
 	JSON.stringify({v: 1, current: file.current, keys: file.keys.map(k => ({kid: k.kid, key: k.key.toString('base64')}))}) + '\n';
 
-/**
- * The vault key of the account data dir and the envelopes made with it; the only code that touches the
- * key. `encryptedDataExists` keeps a new key from being made while data encrypted under a lost one exists.
- */
 export function createVault(dataDir: string, opts: {encryptedDataExists: () => Promise<boolean>}) {
 	const dir = path.join(dataDir, VAULT_DIR);
 	const file = path.join(dir, KEY_FILE);
 	let cache: {stamp: string; keys: KeyFile} | undefined;
-	// Every key seen in this process, base64, for the log redactor.
 	const seen = new Set<string>();
 
 	const remember = (keys: KeyFile) => {
@@ -90,7 +83,6 @@ export function createVault(dataDir: string, opts: {encryptedDataExists: () => P
 		await chmod(dir, 0o700);
 	}
 
-	/** undefined: no key file. Throws the locked error for anything that is not a usable key file. */
 	async function load(): Promise<KeyFile | undefined> {
 		try {
 			const d = await lstat(dir);
@@ -141,7 +133,6 @@ export function createVault(dataDir: string, opts: {encryptedDataExists: () => P
 		const tmp = path.join(dir, `${KEY_FILE}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
 		await writeFile(tmp, keyFileText(remember(keys)), {mode: 0o600, flag: 'wx'});
 		try {
-			// link() never replaces: another process that made a key first wins, and its key is used.
 			await link(tmp, file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
@@ -165,7 +156,6 @@ export function createVault(dataDir: string, opts: {encryptedDataExists: () => P
 		return {v: 1, kid: key.kid, iv: iv.toString('base64'), ct: ct.toString('base64'), tag: cipher.getAuthTag().toString('base64')};
 	}
 
-	/** The plaintext of an envelope; never a fallback: any problem throws. `account` names it in the error. */
 	async function decrypt(envelope: unknown, aad: string, account: string): Promise<Buffer> {
 		const keys = await load();
 		if (!keys) throw lockedError();
@@ -195,10 +185,8 @@ export function createVault(dataDir: string, opts: {encryptedDataExists: () => P
 		}
 	}
 
-	/** The current key id, making the key when there is none (and no encrypted data). */
 	const currentKid = async (): Promise<number> => (await keysForWrite()).current;
 
-	/** A new current key next to the old ones; an interrupted rotation (more than one key) is resumed instead. */
 	async function beginRotation(): Promise<number> {
 		const keys = await load();
 		if (!keys) throw lockedError();
@@ -208,14 +196,12 @@ export function createVault(dataDir: string, opts: {encryptedDataExists: () => P
 		return kid;
 	}
 
-	/** Drops every key but the current one; only after everything is encrypted under it. */
 	async function finishRotation(): Promise<void> {
 		const keys = await load();
 		if (!keys) throw lockedError();
 		await replace({current: keys.current, keys: keys.keys.filter(k => k.kid === keys.current)});
 	}
 
-	/** Moves an unusable key file aside (kept as `key.unusable`), so a new key can be made. */
 	async function discardUnusable(): Promise<boolean> {
 		if ((await status()).state !== 'unusable') return false;
 		try {
@@ -229,7 +215,6 @@ export function createVault(dataDir: string, opts: {encryptedDataExists: () => P
 		return true;
 	}
 
-	/** Masks every vault key this process has loaded. */
 	const redact = (text: string): string => {
 		let out = text;
 		for (const k of seen) out = out.split(k).join('[vault key]');

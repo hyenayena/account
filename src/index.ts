@@ -10,9 +10,7 @@ import {inventory, migrate} from './migrate.js';
 import {createProvider} from './provider.js';
 import {createStore, type Store} from './store.js';
 
-// Private keys never pass through yena's logs, but if one ever reached a log line it is cut out.
 const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
-// Shorter values would also cut ordinary words out of log lines.
 const MIN_REDACTED = 6;
 
 export const redactPrivateKeys = (text: string) => text.replace(PRIVATE_KEY, '[private key]');
@@ -22,7 +20,6 @@ export function redactValues(values: readonly string[]): (text: string) => strin
 	return text => sorted.reduce((t, v) => t.split(v).join('[secret]'), text);
 }
 
-/** The store, with the ssh-agents brought in line after every change that adds, disables or removes a key. */
 function withAgents(store: Store, agents: Agents, log: Logger): Store {
 	let queue = Promise.resolve();
 	const sync = () => {
@@ -42,14 +39,12 @@ function withAgents(store: Store, agents: Agents, log: Logger): Store {
 	return {...store, add: after(store.add), setDisabled: after(store.setDisabled), remove: after(store.remove)};
 }
 
-/** The plugin; `agents: false` leaves ssh-agents alone (tests that load the plugin). */
 export function createPlugin(opts: {agents?: boolean} = {}): ModulePlugin {
 	return async host => {
 		const log = host.log ?? noopLog;
 		const raw = createStore(host.dataDir, {log});
 		let redactSecrets = redactValues([]);
 		log.addRedactor(text => redactSecrets(redactPrivateKeys(raw.vault.redact(text))));
-		// Before the agents load keys: what 0.5.0 stored in plaintext is encrypted first.
 		await migrate(raw, log);
 		const left = await inventory(raw).catch(() => undefined);
 		if (left && left.plaintext > 0) log.warn('vault has unencrypted entries', {count: left.plaintext});

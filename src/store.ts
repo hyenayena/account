@@ -12,7 +12,6 @@ import {createVault, isEnvelope, secretAad, sshAad, type Envelope} from './vault
 export type Account = {
 	name: string;
 	kind: string;
-	// Public fields only; secrets are never part of an Account.
 	fields: Record<string, string>;
 	publicKey?: string;
 	fingerprint?: string;
@@ -41,7 +40,6 @@ export function checkName(name: string | undefined): string {
 	return name;
 }
 
-/** Checks public values against the kind; github's login and email have their own shapes. */
 export function checkFields(kind: Kind, fields: Record<string, string>): Record<string, string> {
 	for (const [key, value] of Object.entries(fields)) {
 		const field = kind.fields.find(f => f.key === key);
@@ -60,7 +58,6 @@ const validStored = (a: unknown): a is Record<string, unknown> & {name: string} 
 	return typeof r?.name === 'string' && NAME.test(r.name);
 };
 
-// Version 1 (0.1.0) had only GitHub accounts with login and email at the top level.
 function normalize(raw: Record<string, unknown> & {name: string}): Stored {
 	const fields: Record<string, string> = {};
 	const source = raw.fields && typeof raw.fields === 'object' ? (raw.fields as Record<string, unknown>) : {login: raw.login, email: raw.email};
@@ -80,11 +77,9 @@ const parseAccounts = (raw: unknown): Stored[] => {
 	return Array.isArray(accounts) ? accounts.filter(validStored).map(normalize) : [];
 };
 
-/** One secret field as stored: encrypted, plaintext from before 0.6.0, or something that is neither. */
 export type SecretEntry = {state: 'encrypted'; envelope: Envelope} | {state: 'plain'; value: string} | {state: 'bad'; raw: unknown};
 export type SecretsFile = {encrypted: boolean; entries: Map<string, SecretEntry>};
 
-/** `{v: 2, fields: {field: envelope}}`; a file without `v: 2` is the plaintext `{field: value}` of 0.5.0. */
 export function decodeSecrets(text: string): SecretsFile {
 	let raw: unknown;
 	try {
@@ -105,7 +100,6 @@ export function decodeSecrets(text: string): SecretsFile {
 
 export const encodeSecrets = (fields: Record<string, unknown>): string => JSON.stringify({v: 2, fields}) + '\n';
 
-/** Reads a file only when it is not a symlink; undefined when it does not exist. */
 export async function readPrivate(file: string): Promise<Buffer | undefined> {
 	let handle;
 	try {
@@ -123,7 +117,6 @@ export async function readPrivate(file: string): Promise<Buffer | undefined> {
 
 const tmpName = (file: string) => `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
 
-/** Writes a temp file next to `file` (exclusive, 0600) and returns its path; the caller renames it. */
 export async function writeTemp(file: string, data: string | Buffer, mode = 0o600): Promise<string> {
 	const tmp = tmpName(file);
 	await writeFile(tmp, data, {mode, flag: 'wx'});
@@ -178,14 +171,12 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		await writePrivate(file, JSON.stringify(data, null, '\t') + '\n');
 	}
 
-	// A disabled account has a marker in disabled/ and, for SSH, next to its key, where ssh-as looks.
 	const isDisabled = (name: string) => existsSync(disabledPath(name));
 
 	async function list(): Promise<Account[]> {
 		return (await read()).map(a => ({...a, disabled: isDisabled(a.name)}));
 	}
 
-	// The settings screen collects its tabs synchronously.
 	function listSync(): Account[] {
 		try {
 			return parseAccounts(JSON.parse(readFileSync(file, 'utf8'))).map(a => ({...a, disabled: isDisabled(a.name)}));
@@ -206,7 +197,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		await chmod(keysDir, 0o700);
 	}
 
-	/** Encrypts a private key to `<name>.enc`: written aside, read back and compared, then renamed in. */
 	async function writeEncryptedKey(name: string, privateKey: Buffer): Promise<void> {
 		await ensureKeysDir();
 		const target = encKeyPath(name);
@@ -223,7 +213,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		}
 	}
 
-	/** For a kind with SSH (unless `ssh: false`), an ed25519 key pair made in memory; the private half is stored encrypted only. */
 	async function add(input: {name: string; kind: Kind; fields?: Record<string, string>; ssh?: boolean}, now = Date.now()): Promise<Account> {
 		const name = checkName(input.name);
 		const fields = checkFields(input.kind, input.fields ?? {});
@@ -272,10 +261,8 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		return (await vault.decrypt(entry.state === 'encrypted' ? entry.envelope : entry.raw, secretAad(name, field), name)).toString('utf8');
 	};
 
-	/** Names of the secret fields that hold a value; never the values, and no key needed. */
 	const secretNames = async (name: string): Promise<string[]> => [...(await readSecrets(name)).entries.keys()].sort();
 
-	/** Per set secret field: readable, still plaintext (not migrated yet), or not decryptable. */
 	async function secretStates(name: string): Promise<Record<string, SecretState>> {
 		const states: Record<string, SecretState> = {};
 		for (const [field, entry] of (await readSecrets(name)).entries) {
@@ -285,10 +272,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		return states;
 	}
 
-	/**
-	 * Writes the whole secrets file encrypted: the plaintext fields of 0.5.0 are encrypted on the way, fields
-	 * that cannot be decrypted are kept as they are. Read-modify-write is not locked across processes.
-	 */
 	async function setSecret(name: string, field: string, value: string | undefined): Promise<void> {
 		const account = await get(name);
 		const kind = await kinds.get(account.kind).catch(() => undefined);
@@ -307,14 +290,12 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		await writePrivate(secretsPath(account.name), encodeSecrets(out));
 	}
 
-	/** A secret for in-process use; undefined when unset or the account is disabled; throws when it cannot be decrypted. */
 	async function secret(name: string, field: string): Promise<string | undefined> {
 		if (isDisabled(checkName(name))) return undefined;
 		const entry = (await readSecrets(name)).entries.get(field);
 		return entry ? decryptEntry(name, field, entry) : undefined;
 	}
 
-	/** Every stored secret and the long string leaves of JSON ones, for the log redactor; undecryptable ones are skipped. */
 	async function allSecretValues(): Promise<string[]> {
 		const values: string[] = [];
 		let skipped = 0;
@@ -332,7 +313,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		return values;
 	}
 
-	/** The private SSH key, decrypted in memory (a plaintext key not migrated yet is read as it is). The caller wipes it. */
 	async function privateKey(name: string): Promise<Buffer> {
 		const enc = await readPrivate(encKeyPath(name));
 		if (enc) {
@@ -369,7 +349,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 
 	const usesKind = async (kind: string) => (await read()).some(a => a.kind === kind);
 
-	/** Names that have a secrets file, and the SSH key files in the keys folder, for migration and the vault commands. */
 	async function secretFiles(): Promise<string[]> {
 		const entries = await readdir(secretsDir).catch(() => [] as string[]);
 		return entries.filter(e => e.endsWith('.json') && NAME.test(e.slice(0, -5))).map(e => e.slice(0, -5));
@@ -385,10 +364,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		return [...names].sort().map(name => ({name, encrypted: entries.has(`${name}.enc`), plain: entries.has(name)}));
 	}
 
-	/**
-	 * Replaces a secrets file with `fields` (envelopes, or kept raw entries): written aside, read back, every
-	 * field in `expect` decrypted and compared byte for byte, then renamed over the old file.
-	 */
 	async function replaceSecrets(name: string, fields: Record<string, unknown>, expect: Map<string, string>): Promise<void> {
 		const target = secretsPath(name);
 		const tmp = await writeTemp(target, encodeSecrets(fields));
@@ -407,7 +382,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 		}
 	}
 
-	/** Drops an SSH key that cannot be used any more: its files and the public half in accounts.json. */
 	async function forgetKey(name: string): Promise<void> {
 		for (const p of [keyBase(name), encKeyPath(name), `${keyBase(name)}.pub`, `${keyBase(name)}.disabled`]) await rm(p, {force: true});
 		const accounts = await read();
@@ -421,7 +395,6 @@ export function createStore(dataDir: string, opts: {log?: Logger} = {}) {
 
 	const removePlainKey = (name: string) => rm(keyBase(name), {force: true});
 
-	/** Removes fields of an encrypted secrets file without decrypting the others. */
 	async function dropSecrets(name: string, drop: string[]): Promise<void> {
 		const file = await readSecrets(name);
 		if (!file.encrypted) throw new Error('Only an encrypted secrets file drops fields this way');

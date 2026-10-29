@@ -42,7 +42,6 @@ test('a directory that is not a repository is refused', async () => {
 	await assert.rejects(useAccount(runGit, await tmp(), account, data), /is not a git repository/);
 });
 
-// ssh-as through a fake ssh on PATH that prints its arguments.
 async function sshAs(data: string, name: string) {
 	const bin = await tmp();
 	await writeFile(path.join(bin, 'ssh'), '#!/bin/sh\necho "$@"\n');

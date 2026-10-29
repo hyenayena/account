@@ -31,10 +31,6 @@ const problem = (fn: () => unknown): string | undefined => {
 	}
 };
 
-/**
- * ListPicker calls close() and then onPick() for Enter, but only close() for Esc. The cancel waits a
- * microtask so a pick that follows in the same tick wins.
- */
 function picker(onPick: (id: string) => void, onCancel: () => void) {
 	let picked = false;
 	return {
@@ -99,7 +95,6 @@ function Failed({control, message}: {control: MountControl; message: string}) {
 function Wizard({control, deps}: {control: MountControl; deps: WizardDeps}) {
 	const {store, kinds} = deps;
 	const [step, setStep] = useState<Step>({at: 'kind'});
-	// Accounts whose secret only a module sets (claude-login) are not made here.
 	const all = useRef(kinds.listSync().filter(k => !isManagedKind(k))).current;
 	const cancel = () => control.close();
 	const host = control.host ? {host: control.host} : {};

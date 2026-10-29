@@ -10,7 +10,6 @@ import {createStore, type Store} from '../src/store.js';
 import {tmp} from './helpers.js';
 
 const kind = (name: string) => BUILTIN_KINDS.find(k => k.name === name)!;
-// Generated shapes, not real credentials.
 const KEY = 'sk-ant-api03-' + 'Gen3rated_'.repeat(4);
 const TOKEN = 'sk-ant-oat01-' + 'Gen3rated_'.repeat(4);
 const LOGIN = JSON.stringify({credentials: {claudeAiOauth: {accessToken: 'sk-ant-oat01-' + 'Acc3ss_'.repeat(6), refreshToken: 'sk-ant-ort01-' + 'Refr3sh_'.repeat(6)}}});
@@ -30,7 +29,6 @@ function recordingLog() {
 	return {log, records};
 }
 
-/** A store that counts every call, to prove an ungranted caller never reaches it. */
 function counting(store: Store): {store: Store; calls: string[]} {
 	const calls: string[] = [];
 	const wrapped = {...store} as Record<string, unknown>;
@@ -125,7 +123,6 @@ test('a read grant cannot write, create or remove; effective access is min(decla
 	await grants.allow('claude', {'anthropic-key': 'read', 'anthropic-token': 'write'});
 	const me = caller({'anthropic-key': 'write', 'anthropic-token': 'read'});
 	assert.equal(await provider.read('key1', 'key', me), KEY);
-	// No kind may be changed, so the call is refused before the account is looked up.
 	await assert.rejects(provider.write('key1', 'key', KEY, me), {code: 'CREDENTIAL_ACCESS', message: 'claude may not change credentials. Allow it (only you can, not an assistant): account grant claude'});
 	await assert.rejects(provider.remove('key1', me), {code: 'CREDENTIAL_ACCESS'});
 	await assert.rejects(provider.create({name: 'k2', kind: 'anthropic-key'}, me), {code: 'CREDENTIAL_ACCESS'});

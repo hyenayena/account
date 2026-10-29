@@ -24,7 +24,6 @@ function recordingLog() {
 	return {log, records};
 }
 
-/** A 0.5.0 data dir: a plaintext secrets file and a plaintext private key next to its public half. */
 async function legacy() {
 	const dir = await tmp();
 	const key = generateEd25519('legacy');
@@ -72,7 +71,6 @@ test('a crash after the .enc was written resumes: the .enc is verified, then the
 
 test('a failure keeps the plaintext readable and logs the step, never a value', async () => {
 	const {store} = await legacy();
-	// Encrypted data under a key that is gone: no new key may be made, so nothing can be migrated.
 	await writeFile(path.join(store.dirs.secrets, 'other.json'), JSON.stringify({v: 2, fields: {x: {v: 1, kid: 1, iv: 'AAAAAAAAAAAAAAAA', ct: 'AA==', tag: 'AAAAAAAAAAAAAAAAAAAAAA=='}}}));
 	const {log, records} = recordingLog();
 	const result = await migrate(store, log);

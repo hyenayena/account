@@ -8,7 +8,6 @@ import {noopLog} from './log.js';
 
 export const GRANTS_FILE = 'grants.json';
 const MAX_FILE = 64 * 1024;
-// The host's module name rule, capped.
 export const MODULE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export type ModuleGrants = Record<string, CredentialAccess>;
@@ -37,10 +36,6 @@ function parse(text: string): GrantTable | undefined {
 	return table;
 }
 
-/**
- * What the user allowed each module: `grants.json` in the account data dir (`{v: 1, grants: {module: {kind:
- * access}}}`). Re-read when it changes; a file that is not a plain, valid file counts as no grants.
- */
 export function createGrants(dataDir: string, log: Logger = noopLog) {
 	const file = path.join(dataDir, GRANTS_FILE);
 	let cache: {stamp: string; table: GrantTable} | undefined;
@@ -112,7 +107,6 @@ export function createGrants(dataDir: string, log: Logger = noopLog) {
 			table[module] = {...(table[module] ?? {}), ...kinds};
 			await save(table);
 		},
-		/** Without `kinds`, every grant of the module. */
 		async revoke(module: string, kinds?: string[]): Promise<string[]> {
 			const table = copy(await load());
 			const own = table[module] ?? {};
@@ -123,7 +117,6 @@ export function createGrants(dataDir: string, log: Logger = noopLog) {
 			await save(table);
 			return removed;
 		},
-		/** Drops the grants of modules that are no longer installed. */
 		async prune(installed: string[]): Promise<string[]> {
 			const table = copy(await load());
 			const gone = Object.keys(table).filter(m => !installed.includes(m));
