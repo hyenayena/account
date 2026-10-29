@@ -38,8 +38,22 @@ test('registers "account": reads are safe, everything that changes something ask
 	const command = await load(await tmp());
 	assert.equal(command.name, 'account');
 	assert.equal(command.agent, 'confirm');
-	assert.deepEqual(command.subcommands!.filter(s => s.agent === 'safe').map(s => s.name), ['list', 'show', 'fields', 'kinds', 'key', 'which', 'help']);
+	assert.deepEqual(command.subcommands!.filter(s => s.agent === 'safe').map(s => s.name), ['list', 'show', 'fields', 'kinds', 'key', 'which']);
 	assert.ok(command.subcommands!.every(s => s.agent === 'safe' || s.agent === 'confirm'));
+});
+
+test('no subcommand shows the help through ctx.showHelp, or the usage without it', async () => {
+	const command = await load(await tmp());
+	let shown = 0;
+	assert.deepEqual(await run(command, '', {showHelp: () => void shown++}), []);
+	assert.equal(shown, 1);
+	assert.deepEqual(await run(command, 'help'), ['account <subcommand>']);
+	const kind = command.subcommands!.find(s => s.name === 'kind')!;
+	assert.deepEqual(kind.subcommands!.map(s => [s.name, s.agent]), [['add', 'confirm'], ['remove', 'confirm']]);
+	let path: string[] | undefined;
+	assert.deepEqual(await run(command, 'kind', {showHelp: p => void (path = p)}), []);
+	assert.deepEqual(path, ['kind']);
+	await assert.rejects(run(command, 'kind'), /Usage: account kind add/);
 });
 
 test('a github account by default: add prints the public key and nothing like a private one', async () => {

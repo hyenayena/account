@@ -14,40 +14,102 @@ export type Deps = {
 	sshAs?: string;
 };
 
+const NAME = {name: 'name', description: 'The account'};
+const DIR = {name: 'dir', description: 'A directory in the repository (default: the current one)'};
+const FIELD_OPTION = {name: '--<field>', value: '<value>', description: 'A public field of the kind (one word)', repeatable: true};
+
 const subcommands: Subcommand[] = [
 	{name: 'new', usage: 'account new', description: 'Add an account step by step (also in settings → Accounts)', agent: 'confirm'},
-	{name: 'list', aliases: ['ls'], usage: 'account list [kind]', description: 'Show the accounts', agent: 'safe'},
-	{name: 'show', usage: 'account show <name>', description: 'Public fields, which secrets are set, the SSH key fingerprint', agent: 'safe'},
-	{name: 'fields', usage: 'account fields <name>', description: 'Every field of the account kind: filled in or empty (no values)', agent: 'safe'},
+	{
+		name: 'list',
+		aliases: ['ls'],
+		usage: 'account list [kind]',
+		description: 'Show the accounts',
+		args: [{name: 'kind', description: 'Only accounts of this kind'}],
+		agent: 'safe',
+	},
+	{name: 'show', usage: 'account show <name>', description: 'Public fields, which secrets are set, the SSH key fingerprint', args: [NAME], agent: 'safe'},
+	{name: 'fields', usage: 'account fields <name>', description: 'Every field of the account kind: filled in or empty (no values)', args: [NAME], agent: 'safe'},
 	{
 		name: 'add',
 		usage: 'account add <name> [--kind <kind>] [--<field> <value>]… [--no-ssh]',
-		description: `Create an account (kind ${DEFAULT_KIND} by default; a ${DEFAULT_KIND} account gets a new SSH key unless --no-ssh)`,
+		description: 'Create an account',
+		args: [{name: 'name', description: 'Name of the new account'}],
+		options: [
+			{name: '--kind', value: '<kind>', description: `Kind of the account (default ${DEFAULT_KIND}); see account kinds`},
+			FIELD_OPTION,
+			{name: '--no-ssh', description: `No SSH key for a ${DEFAULT_KIND} account`},
+		],
+		notes: [`A ${DEFAULT_KIND} account gets a new SSH key unless --no-ssh`, 'Secrets are entered afterwards: account secret <name> <field>'],
 		agent: 'confirm',
 	},
-	{name: 'set', usage: 'account set <name> --<field> <value>…', description: 'Change public fields of an account', agent: 'confirm'},
+	{
+		name: 'set',
+		usage: 'account set <name> [--<field> <value>]…',
+		description: 'Change public fields of an account',
+		args: [NAME],
+		options: [FIELD_OPTION],
+		notes: ['At least one field'],
+		agent: 'confirm',
+	},
 	{
 		name: 'secret',
 		usage: 'account secret <name> <field> [--clear]',
 		description: 'Enter a secret in a hidden input (never on the command line), or clear it',
+		args: [NAME, {name: 'field', description: 'A secret field of the kind'}],
+		options: [{name: '--clear', description: 'Remove the secret instead'}],
 		agent: 'confirm',
 	},
 	{name: 'kinds', usage: 'account kinds', description: 'Show the kinds of accounts and their fields', agent: 'safe'},
 	{
 		name: 'kind',
-		usage: 'account kind <add <kind> <field>[:secret][!]… [--one-of <a,b>]…|remove <kind>>',
-		description: 'Define your own kind (! required, --one-of: at least one of), e.g.: account kind add stripe accountId! token:secret!',
+		usage: 'account kind <subcommand>',
+		description: 'Define your own kinds of accounts, or remove them',
+		args: [{name: 'subcommand', description: 'add or remove'}],
+		agent: 'confirm',
+		subcommands: [
+			{
+				name: 'add',
+				usage: 'account kind add <kind> <field>… [--one-of <a,b>]…',
+				description: 'Define a kind with its fields',
+				args: [
+					{name: 'kind', description: 'Name of the new kind'},
+					{name: 'field', description: 'A field: <name>, <name>:secret, with a trailing ! when required'},
+				],
+				options: [{name: '--one-of', value: '<a,b>', description: 'At least one of these fields must be set', repeatable: true}],
+				notes: [
+					':secret marks a secret field: entered in a hidden input, never shown',
+					'A trailing ! marks a required field',
+					'Example: account kind add stripe accountId! token:secret!',
+				],
+				agent: 'confirm',
+			},
+			{
+				name: 'remove',
+				aliases: ['rm'],
+				usage: 'account kind remove <kind>',
+				description: 'Remove a kind that no account uses',
+				args: [{name: 'kind', description: 'The kind'}],
+				agent: 'confirm',
+			},
+		],
+	},
+	{name: 'key', usage: 'account key <name>', description: 'Print the public SSH key of an account', args: [NAME], agent: 'safe'},
+	{
+		name: 'use',
+		usage: 'account use <name> [dir]',
+		description: 'Make git in a repository push, pull and commit as the account',
+		args: [NAME, DIR],
 		agent: 'confirm',
 	},
-	{name: 'key', usage: 'account key <name>', description: 'Print the public SSH key of an account', agent: 'safe'},
-	{name: 'use', usage: 'account use <name> [repo dir]', description: 'Make git in a repository push, pull and commit as the account', agent: 'confirm'},
-	{name: 'unuse', usage: 'account unuse [repo dir]', description: 'Stop using an account in a repository', agent: 'confirm'},
-	{name: 'which', usage: 'account which [repo dir]', description: 'Show which account a repository uses', agent: 'safe'},
-	{name: 'disable', usage: 'account disable <name>', description: 'Stop the account working anywhere', agent: 'confirm'},
-	{name: 'enable', usage: 'account enable <name>', description: 'Let a disabled account work again', agent: 'confirm'},
-	{name: 'remove', aliases: ['rm'], usage: 'account remove <name>', description: 'Delete an account with its secrets and key', agent: 'confirm'},
-	{name: 'help', usage: 'account help', description: 'Show this help', agent: 'safe'},
+	{name: 'unuse', usage: 'account unuse [dir]', description: 'Stop using an account in a repository', args: [DIR], agent: 'confirm'},
+	{name: 'which', usage: 'account which [dir]', description: 'Show which account a repository uses', args: [DIR], agent: 'safe'},
+	{name: 'disable', usage: 'account disable <name>', description: 'Stop the account working anywhere', args: [NAME], agent: 'confirm'},
+	{name: 'enable', usage: 'account enable <name>', description: 'Let a disabled account work again', args: [NAME], agent: 'confirm'},
+	{name: 'remove', aliases: ['rm'], usage: 'account remove <name>', description: 'Delete an account with its secrets and key', args: [NAME], agent: 'confirm'},
 ];
+
+const USAGE = 'account <subcommand>';
 
 const clip = (s: string) => s.slice(0, 40);
 
@@ -146,8 +208,9 @@ export function createCommand(deps: Deps): Command {
 
 	return {
 		name: 'account',
-		description: 'Accounts for services; secrets are never shown (account help)',
-		usage: 'account <new|list|show|fields|add|set|secret|kinds|kind|key|use|unuse|which|disable|enable|remove|help> [args]',
+		description: 'Accounts for services; secrets are never shown',
+		usage: USAGE,
+		args: [{name: 'subcommand', description: 'What to do; see the subcommands'}],
 		subcommands,
 		agent: 'confirm',
 		// A getter, so the settings screen lists the accounts as they are when it opens.
@@ -267,6 +330,7 @@ export function createCommand(deps: Deps): Command {
 						await kinds.remove(name);
 						return ctx.print(`✓ Kind "${name}" removed`);
 					}
+					if (action === undefined && ctx.showHelp) return ctx.showHelp(['kind']);
 					throw new Error('Usage: account kind add <kind> <field>[:secret]… | account kind remove <kind>');
 				}
 				case 'key':
@@ -302,11 +366,8 @@ export function createCommand(deps: Deps): Command {
 					return ctx.print(`✓ Account "${name}" deleted with its secrets and key`);
 				}
 				case 'help':
-				case undefined: {
-					const width = Math.max(...subcommands.map(s => s.usage.length));
-					for (const s of subcommands) ctx.print(`  ${s.usage.padEnd(width)}   ${s.description}`);
-					return;
-				}
+				case undefined:
+					return ctx.showHelp ? ctx.showHelp() : ctx.print(USAGE);
 				default:
 					throw new Error(`Unknown subcommand "${clip(String(sub))}". See: account help`);
 			}

@@ -24,14 +24,14 @@ Fields are optional unless marked required (`!`). A kind may also have one-of gr
 | `account secret <name> <field>` | confirm | Opens the hidden input in the console panel; what is typed is saved and only `✓ <name>: <field> saved` is printed. Needs the app (`./yena`), refused from the host terminal |
 | `account secret <name> <field> --clear` | confirm | Removes the secret |
 | `account kinds` | safe | The kinds, their fields (`!` required), SSH key, one-of groups |
-| `account kind add <kind> <field>[:secret][!]… [--one-of <a,b>]…`, `kind remove <kind>` | confirm | Defines or removes a kind of your own |
+| `account kind add <kind> <field>[:secret][!]… [--one-of <a,b>]…`, `account kind remove <kind>` | confirm | Defines or removes a kind of your own (nested subcommands; `account kind` alone shows its help) |
 | `account key <name>` | safe | The public SSH key |
 | `account use <name> [repo dir]` | confirm | In that repository (default: the current directory): `core.sshCommand` through `bin/ssh-as`, `user.name` (login, else name), `user.email`, `yena.account`; then plain `git push` goes out as the account |
 | `account unuse [repo dir]` | confirm | Unsets those four keys (a local `user.name`/`user.email` set before `use` is gone too) |
 | `account which [repo dir]` | safe | The account a repository uses |
 | `account disable <name>`, `enable <name>` | confirm | A disabled account gives no secrets to modules and fails in every repository that uses it |
 | `account remove <name>` (`rm`) | confirm | Deletes the account with its secrets and key |
-| `account help` | safe | The usage |
+| `account help` | safe | The generated help (core); `account <subcommand> help` and `help account <subcommand>` work too, and `--<field> <value>` is documented for the account fields |
 
 Account names: `a-z`, `0-9`, `-`, `_`, at most 32 characters. Values are single words (the console splits on whitespace).
 
