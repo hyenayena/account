@@ -64,7 +64,7 @@ test('github step by step: name, login, skipped email, an SSH key, a skipped tok
 
 test('a kind of your own: a required field, then a secret that never reaches the screen', async () => {
 	const {store, ui} = await setup(true);
-	await ui.press(DOWN);
+	for (let i = 0; i < 3; i++) await ui.press(DOWN);
 	await ui.press('\r');
 	await ui.press('pay');
 	await ui.press('\r');
@@ -93,7 +93,7 @@ test('Esc before anything is saved cancels; Esc at a secret keeps the account an
 	first.ui.unmount();
 
 	const second = await setup(true);
-	await second.ui.press(DOWN);
+	for (let i = 0; i < 3; i++) await second.ui.press(DOWN);
 	await second.ui.press('\r');
 	await second.ui.press('pay');
 	await second.ui.press('\r');
@@ -104,4 +104,27 @@ test('Esc before anything is saved cancels; Esc at a secret keeps the account an
 	assert.match(second.ui.last(), /Still needed: token/);
 	assert.equal((await second.store.list()).length, 1);
 	second.ui.unmount();
+});
+
+test('the kind picker leaves out claude-login; an invalid Anthropic key shows the error and stays on the step', async () => {
+	const {store, ui} = await setup();
+	assert.match(ui.last(), /anthropic-key \(built in\)/);
+	assert.match(ui.last(), /anthropic-token \(built in\)/);
+	assert.doesNotMatch(ui.all(), /claude-login/);
+	await ui.press(DOWN);
+	await ui.press('\r');
+	await ui.press('k1');
+	await ui.press('\r');
+	await until(() => /key for k1/.test(ui.last()));
+	await ui.press('not-a-key');
+	await ui.press('\r');
+	await until(() => /Not an Anthropic API key/.test(ui.last()));
+	assert.match(ui.last(), /key for k1/);
+	const fake = 'sk-ant-api03-' + 'W1zard_'.repeat(5);
+	await ui.press(fake);
+	await ui.press('\r');
+	await until(() => /created/.test(ui.last()));
+	assert.ok(!ui.all().includes(fake));
+	assert.equal(await store.secret('k1', 'key'), fake);
+	ui.unmount();
 });

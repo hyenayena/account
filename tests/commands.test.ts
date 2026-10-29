@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {readFile, rm} from 'node:fs/promises';
+import path from 'node:path';
 import {test} from 'node:test';
-import type {Command, CommandContext, MountControl, MountOptions, SettingsTab} from '../../../src/api.js';
+import type {BuildInfo, Command, CommandContext, CredentialProvider, Logger, MountControl, MountOptions, PluginHost, SettingsTab} from '../../../src/api.js';
+import {createGrants} from '../src/grants.js';
 import {createPlugin, redactPrivateKeys, redactValues} from '../src/index.js';
+import {BUILTIN_KINDS} from '../src/kinds.js';
+import {createStore} from '../src/store.js';
 import {makeCtx, tmp} from './helpers.js';
 
 const plugin = createPlugin({agents: false});
 
-const load = async (dataDir: string): Promise<Command> => {
-	const commands = await plugin({dataDir, events: {emit() {}, on: () => () => {}}, log: undefined as never});
+const load = async (dataDir: string, extra: Partial<PluginHost> = {}): Promise<Command> => {
+	const commands = await plugin({dataDir, events: {emit() {}, on: () => () => {}}, log: undefined as never, ...extra});
 	assert.equal(commands.length, 1);
 	return commands[0]!;
 };
@@ -38,8 +43,10 @@ test('registers "account": reads are safe, everything that changes something ask
 	const command = await load(await tmp());
 	assert.equal(command.name, 'account');
 	assert.equal(command.agent, 'confirm');
-	assert.deepEqual(command.subcommands!.filter(s => s.agent === 'safe').map(s => s.name), ['list', 'show', 'fields', 'kinds', 'key', 'which']);
-	assert.ok(command.subcommands!.every(s => s.agent === 'safe' || s.agent === 'confirm'));
+	assert.deepEqual(command.subcommands!.filter(s => s.agent === 'safe').map(s => s.name), ['list', 'show', 'fields', 'kinds', 'key', 'which', 'grants']);
+	assert.deepEqual(command.subcommands!.filter(s => s.agent === 'deny').map(s => s.name), ['grant', 'revoke']);
+	const vault = command.subcommands!.find(s => s.name === 'vault')!;
+	assert.deepEqual(vault.subcommands!.map(s => [s.name, s.agent]), [['status', 'safe'], ['rotate', 'deny'], ['reset', 'deny']]);
 });
 
 test('no subcommand shows the help through ctx.showHelp, or the usage without it', async () => {
@@ -73,6 +80,9 @@ test('a kind of your own: fields on the command line, secrets only through the h
 	assert.deepEqual(await run(command, 'kind add stripe accountId! token:secret!'), ['✓ Kind added: stripe: accountId!, token! (secret)']);
 	assert.deepEqual(await run(command, 'kinds'), [
 		'  github (built in): login, email, token (secret), SSH key, one of ssh | token',
+		'  anthropic-key (built in): key! (secret)',
+		'  anthropic-token (built in): token! (secret)',
+		'  claude-login (built in): email, method, login! (secret)',
 		'  stripe: accountId!, token! (secret)',
 	]);
 	await assert.rejects(run(command, 'add pay --kind stripe --token sk_live_x'), /"token" is secret and is never typed in a command line/);
@@ -228,4 +238,132 @@ test('the log redactor cuts private key blocks and stored secret values', () => 
 	assert.equal(redactPrivateKeys('x -----BEGIN RSA PRIVATE KEY-----\ncut off'), 'x [private key]');
 	const redact = redactValues(['sk_live_abcdef', 'sk_live_abcdef_longer', 'abc']);
 	assert.equal(redact('a sk_live_abcdef_longer b sk_live_abcdef c abc'), 'a [secret] b [secret] c abc');
+});
+
+// Generated shapes, not real credentials.
+const FAKE_KEY = 'sk-ant-api03-' + 'Cmd7est_'.repeat(5);
+const ACCESS = 'sk-ant-oat01-' + 'L0ginAcc_'.repeat(5);
+
+const build: BuildInfo = {
+	version: '0.0.0',
+	modules: [
+		{name: 'account', version: '0.6.0'},
+		{name: 'claude', version: '0.12.0', credentials: {'anthropic-key': 'write', 'anthropic-token': 'read'}},
+		{name: 'core', version: '1.0.0'},
+	],
+};
+
+function capture() {
+	const records: {msg: string; fields?: unknown}[] = [];
+	const redactors: ((t: string) => string)[] = [];
+	const log: Logger = {
+		error: (msg, fields) => void records.push({msg, fields}),
+		warn: (msg, fields) => void records.push({msg, fields}),
+		info: (msg, fields) => void records.push({msg, fields}),
+		debug: (msg, fields) => void records.push({msg, fields}),
+		child: () => log,
+		addRedactor: r => void redactors.push(r),
+	};
+	let provider: CredentialProvider | undefined;
+	return {
+		records,
+		redact: (t: string) => redactors.reduce((x, r) => r(x), t),
+		host: {log, build, registerCredentialProvider: (p: CredentialProvider) => void (provider = p)},
+		provider: () => provider!,
+	};
+}
+
+test('Anthropic kinds: a login cannot be typed or made by hand; a bad key is refused; nothing prints a value', async () => {
+	const command = await load(await tmp());
+	await assert.rejects(run(command, 'add c1 --kind claude-login'), {message: 'Accounts of kind claude-login are made by: claude auth login'});
+	await run(command, 'add k1 --kind anthropic-key');
+	await assert.rejects(run(command, 'secret k1 key', {mount: typing('not-a-key').mount}), {message: 'Not an Anthropic API key (sk-ant-…)'});
+	assert.deepEqual(await run(command, 'secret k1 key', {mount: typing(FAKE_KEY).mount}), ['✓ k1: key saved']);
+	const shown = [...(await run(command, 'show k1')), ...(await run(command, 'list')), ...(await run(command, 'fields k1'))].join('\n');
+	assert.match(shown, /key!: set \(hidden\)/);
+	assert.ok(!shown.includes(FAKE_KEY));
+});
+
+test('account secret refuses the managed login field', async () => {
+	const dir = await tmp();
+	const command = await load(dir);
+	await createStore(dir).add({name: 'c2', kind: BUILTIN_KINDS.find(k => k.name === 'claude-login')!});
+	await assert.rejects(run(command, 'secret c2 login', {mount: typing('{}').mount}), {message: '"login" is set by the module that uses it (claude auth login); it cannot be typed'});
+	assert.deepEqual((await run(command, 'show c2')).slice(1), ['  email: -', '  method: -', '  login!: not set', '  Missing: login']);
+});
+
+test('grants: listed per declaring module; grant and revoke change them; assistants are refused', async () => {
+	const c = capture();
+	const command = await load(await tmp(), c.host);
+	assert.deepEqual(await run(command, 'grants'), ['  claude · anthropic-key · declared write · not granted', '  claude · anthropic-token · declared read · not granted']);
+	const signal = new AbortController().signal;
+	await assert.rejects(run(command, 'grant claude', {signal}), /only for you to run in the console, never for an assistant/);
+	await assert.rejects(run(command, 'revoke claude', {signal}), /never for an assistant/);
+	await assert.rejects(run(command, 'grant ghost'), {message: 'Module "ghost" is not installed. See: mod list'});
+	await assert.rejects(run(command, 'grant core'), {message: 'core declares no credentials in its yena.json'});
+	await assert.rejects(run(command, 'grant claude github'), /claude did not declare credentials of kind "github" in yena.json/);
+	await assert.rejects(run(command, 'grant'), /Specify the module/);
+	assert.deepEqual(await run(command, 'grant claude anthropic-token'), ['✓ claude may now use: anthropic-token (read)']);
+	assert.deepEqual(await run(command, 'grant claude'), ['✓ claude may now use: anthropic-key (write), anthropic-token (read)']);
+	assert.deepEqual(await run(command, 'grants'), ['  claude · anthropic-key · declared write · granted write', '  claude · anthropic-token · declared read · granted read']);
+	const me = {module: 'claude', declared: build.modules[1]!.credentials!};
+	assert.deepEqual((await c.provider().list(undefined, me)).length, 0);
+	assert.deepEqual(await run(command, 'revoke claude anthropic-key'), ['✓ claude: anthropic-key revoked']);
+	await assert.rejects(c.provider().list('anthropic-key', me), {code: 'CREDENTIAL_ACCESS'});
+	assert.deepEqual(await run(command, 'revoke claude'), ['✓ claude: anthropic-token revoked']);
+	assert.deepEqual(await run(command, 'revoke claude'), ['claude had no such grants']);
+	assert.deepEqual(await run(await load(await tmp()), 'grants'), ['This yena does not tell which modules declare credentials (an older host)']);
+});
+
+test('grants of modules that are no longer installed are pruned at load', async () => {
+	const dir = await tmp();
+	await createGrants(dir).allow('removed', {'anthropic-key': 'read'});
+	await createGrants(dir).allow('claude', {'anthropic-key': 'read'});
+	await load(dir, capture().host);
+	assert.deepEqual(await createGrants(dir).all(), {claude: {'anthropic-key': 'read'}});
+	await load(dir);
+	assert.deepEqual(Object.keys(await createGrants(dir).all()), ['claude'], 'without build info nothing is pruned');
+});
+
+test('vault: status shows counts only; rotate and reset refuse assistants; reset asks to type reset', async () => {
+	const dir = await tmp();
+	const command = await load(dir);
+	await run(command, 'add k1 --kind anthropic-key');
+	await run(command, 'secret k1 key', {mount: typing(FAKE_KEY).mount});
+	await run(command, 'add gh');
+	assert.deepEqual(await run(command, 'vault status'), ['Vault key: present (key 1)', '  Encrypted: 2']);
+	const signal = new AbortController().signal;
+	await assert.rejects(run(command, 'vault rotate', {signal}), /never for an assistant/);
+	await assert.rejects(run(command, 'vault reset', {signal}), /never for an assistant/);
+	assert.deepEqual(await run(command, 'vault rotate'), ['✓ Vault key 2: 1 secret file and 1 SSH key re-encrypted, the old key dropped']);
+	assert.deepEqual(await run(command, 'vault status'), ['Vault key: present (key 2)', '  Encrypted: 2']);
+	await assert.rejects(run(command, 'vault reset'), /needs the app/);
+	assert.deepEqual(await run(command, 'vault reset', {mount: typing(null).mount}), ['Cancelled, nothing changed']);
+	await rm(path.join(dir, 'vault', 'key'));
+	const status = await run(command, 'vault status');
+	assert.deepEqual(status, ['Vault key: not made yet', '  Encrypted: 0', '  Cannot be decrypted: 2 (restore the vault folder from a backup, or: account vault reset)']);
+	assert.match((await run(command, 'show k1'))[1]!, /key!: set \(cannot be decrypted\)/);
+	const {mount, seen} = typing('reset');
+	assert.deepEqual(await run(command, 'vault reset', {mount}), ['✓ Vault reset: 1 secret and 1 SSH key dropped, a new key made']);
+	assert.match(seen.label!, /Drop 2 entries that cannot be decrypted/);
+	assert.deepEqual(await run(command, 'vault status'), ['Vault key: present (key 1)', '  Encrypted: 0']);
+	let shown: string[] | undefined;
+	await run(command, 'vault', {showHelp: p => void (shown = p)});
+	assert.deepEqual(shown, ['vault']);
+	await assert.rejects(run(command, 'vault nope'), /Unknown subcommand "vault nope"/);
+});
+
+test('the log redactor masks a token inside a stored login blob and the vault key', async () => {
+	const dir = await tmp();
+	const c = capture();
+	await load(dir, c.host);
+	await createGrants(dir).allow('claude', {'claude-login': 'write'});
+	const me = {module: 'claude', declared: {'claude-login': 'write' as const}};
+	await c.provider().create({name: 'c1', kind: 'claude-login'}, me);
+	await c.provider().write('c1', 'login', JSON.stringify({credentials: {claudeAiOauth: {accessToken: ACCESS}}}), me);
+	await new Promise(r => setTimeout(r, 50));
+	assert.equal(c.redact(`token ${ACCESS} end`), 'token [secret] end');
+	const key = (JSON.parse(await readFile(path.join(dir, 'vault', 'key'), 'utf8')) as {keys: {key: string}[]}).keys[0]!.key;
+	assert.equal(c.redact(`k=${key}`), 'k=[vault key]');
+	assert.ok(!JSON.stringify(c.records).includes(ACCESS));
 });

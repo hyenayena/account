@@ -3,7 +3,7 @@ import {mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {test} from 'node:test';
 import {createKinds} from '../src/kinds.js';
-import {accountDataDirFor, accountsFor, secretDirsFor} from '../src/public.js';
+import {accountDataDirFor, accountsFor, deniedPathsFor, secretDirsFor} from '../src/public.js';
 import {createStore} from '../src/store.js';
 import {stripe, tmp} from './helpers.js';
 
@@ -20,14 +20,14 @@ test('another module reaches the accounts from its own data dir, secrets by name
 	await store.setSecret('pay', 'token', 'sk_test_123456');
 
 	const accounts = accountsFor(own);
-	assert.deepEqual((await accounts.kinds()).map(k => k.name), ['github', 'stripe']);
+	assert.deepEqual((await accounts.kinds()).map(k => k.name), ['github', 'anthropic-key', 'anthropic-token', 'claude-login', 'stripe']);
 	assert.deepEqual(await accounts.list('stripe'), [{name: 'pay', kind: 'stripe', fields: {accountId: 'acct_1'}, secrets: ['token'], disabled: false, ssh: false, missing: []}]);
 	assert.deepEqual(await accounts.list('github'), []);
 	assert.ok(!JSON.stringify(await accounts.list()).includes('sk_test'), 'list never carries secret values');
-	assert.equal(await accounts.secret('pay', 'token'), 'sk_test_123456');
-	assert.equal(await accounts.secret('pay', 'missing'), undefined);
-	await store.setDisabled('pay', true);
-	assert.equal(await accounts.secret('pay', 'token'), undefined);
+	assert.equal('secret' in accounts, false, 'values only through the host credential channel');
 	await assert.rejects(accounts.get('ghost'), /does not exist/);
-	assert.deepEqual(secretDirsFor(own), [path.join(dir, 'secrets'), path.join(dir, 'keys')]);
+	const denied = ['accounts.json', 'kinds.json', 'secrets', 'keys', 'disabled', 'vault', 'grants.json'].map(p => path.join(dir, p));
+	assert.deepEqual(deniedPathsFor(own), denied);
+	assert.deepEqual(secretDirsFor(own), denied);
+	assert.ok(!deniedPathsFor(own).includes(path.join(dir, 'ssh_config')), 'ssh reads ssh_config from the sandbox');
 });

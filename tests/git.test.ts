@@ -53,16 +53,14 @@ async function sshAs(data: string, name: string) {
 	});
 }
 
-test('ssh-as runs ssh with only the account key', async () => {
+test('ssh-as never uses the key file (it is encrypted): without the account agent it says so', async () => {
 	const data = await tmp();
 	const store = createStore(data);
 	await store.add({name: 'yena', kind: github});
 	const r = await sshAs(data, 'yena');
-	assert.equal(r.status, 0, r.stderr);
-	assert.equal(
-		r.stdout.trim(),
-		`-i ${store.keyPath('yena')} -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new git@github.com git-upload-pack`,
-	);
+	assert.equal(r.status, 1);
+	assert.equal(r.stdout, '');
+	assert.match(r.stderr, /account "yena": no running ssh agent \(start yena once after the container started\)/);
 });
 
 test('ssh-as refuses a disabled, missing or malformed account', async () => {
@@ -75,7 +73,7 @@ test('ssh-as refuses a disabled, missing or malformed account', async () => {
 	assert.match(r.stderr, /is disabled/);
 	r = await sshAs(data, 'ghost');
 	assert.equal(r.status, 1);
-	assert.match(r.stderr, /has no usable SSH key/);
+	assert.match(r.stderr, /no running ssh agent/);
 	r = await sshAs(data, '../x');
 	assert.equal(r.status, 1);
 	assert.match(r.stderr, /invalid account name/);

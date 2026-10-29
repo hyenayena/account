@@ -2,7 +2,12 @@ import {readFileSync} from 'node:fs';
 import {mkdir, readFile, rename, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
-export type Field = {key: string; secret: boolean; required: boolean};
+export type SecretCheck = 'anthropic-key' | 'anthropic-token' | 'claude-login';
+/**
+ * `check` and `managed` exist only on built-in kinds (never read from the kinds file): `check` names the
+ * validation of a secret, `managed` marks a secret only a module sets through the credential channel.
+ */
+export type Field = {key: string; secret: boolean; required: boolean; check?: SecretCheck; managed?: boolean};
 /**
  * A kind of account: the service it is for and the fields an account of it holds. `oneOf` lists groups
  * of which at least one member must be set; `ssh` stands for the account's SSH key.
@@ -12,6 +17,7 @@ export type Kind = {name: string; fields: Field[]; ssh: boolean; oneOf: string[]
 export const KIND_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 export const FIELD_KEY = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
 export const SSH_KEY = 'ssh';
+export const KINDS_FILE = 'kinds.json';
 const MAX_FIELDS = 20;
 const MAX_GROUPS = 10;
 
@@ -27,7 +33,35 @@ export const BUILTIN_KINDS: Kind[] = [
 		oneOf: [[SSH_KEY, 'token']],
 		builtin: true,
 	},
+	{
+		name: 'anthropic-key',
+		fields: [{key: 'key', secret: true, required: true, check: 'anthropic-key'}],
+		ssh: false,
+		oneOf: [],
+		builtin: true,
+	},
+	{
+		name: 'anthropic-token',
+		fields: [{key: 'token', secret: true, required: true, check: 'anthropic-token'}],
+		ssh: false,
+		oneOf: [],
+		builtin: true,
+	},
+	{
+		name: 'claude-login',
+		fields: [
+			{key: 'email', secret: false, required: false},
+			{key: 'method', secret: false, required: false},
+			{key: 'login', secret: true, required: true, check: 'claude-login', managed: true},
+		],
+		ssh: false,
+		oneOf: [],
+		builtin: true,
+	},
 ];
+
+/** A kind whose required secret only a module sets: the user cannot create its accounts by hand. */
+export const isManagedKind = (kind: Kind): boolean => kind.fields.some(f => f.required && f.managed === true);
 
 export const DEFAULT_KIND = 'github';
 
@@ -112,7 +146,7 @@ const fromFile = (raw: unknown): Kind[] => {
 };
 
 export function createKinds(dataDir: string) {
-	const file = path.join(dataDir, 'kinds.json');
+	const file = path.join(dataDir, KINDS_FILE);
 
 	async function custom(): Promise<Kind[]> {
 		try {

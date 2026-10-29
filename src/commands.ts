@@ -1,6 +1,8 @@
-import type {Command, CommandContext, Logger, MountControl, Setting, SettingsTab, Subcommand, UiElement} from '../../../src/api.js';
+import type {BuildInfo, Command, CommandContext, CredentialAccess, Logger, MountControl, Setting, SettingsTab, Subcommand, UiElement} from '../../../src/api.js';
 import {accountOf, runGit, unuseAccount, useAccount, type Git} from './git.js';
-import {DEFAULT_KIND, fieldStatus, missingOf, SSH_KEY, type Kind, type Kinds} from './kinds.js';
+import {createGrants, type Grants} from './grants.js';
+import {DEFAULT_KIND, fieldStatus, isManagedKind, missingOf, SSH_KEY, type Kind, type Kinds} from './kinds.js';
+import {inventory, reset, rotate} from './migrate.js';
 import {checkName, type Account, type Store} from './store.js';
 
 export type Deps = {
@@ -8,6 +10,9 @@ export type Deps = {
 	store: Store;
 	kinds: Kinds;
 	log: Logger;
+	grants?: Grants;
+	// What is installed, with each module's credentials declaration; absent in older hosts.
+	build?: BuildInfo;
 	// Called after a secret is saved, so the log redactor learns it.
 	onSecretsChanged?: () => void;
 	git?: Git;
@@ -15,6 +20,7 @@ export type Deps = {
 };
 
 const NAME = {name: 'name', description: 'The account'};
+const MODULE = {name: 'module', description: 'An installed module'};
 const DIR = {name: 'dir', description: 'A directory in the repository (default: the current one)'};
 const FIELD_OPTION = {name: '--<field>', value: '<value>', description: 'A public field of the kind (one word)', repeatable: true};
 
@@ -107,11 +113,61 @@ const subcommands: Subcommand[] = [
 	{name: 'disable', usage: 'account disable <name>', description: 'Stop the account working anywhere', args: [NAME], agent: 'confirm'},
 	{name: 'enable', usage: 'account enable <name>', description: 'Let a disabled account work again', args: [NAME], agent: 'confirm'},
 	{name: 'remove', aliases: ['rm'], usage: 'account remove <name>', description: 'Delete an account with its secrets and key', args: [NAME], agent: 'confirm'},
+	{
+		name: 'grants',
+		usage: 'account grants',
+		description: 'Which modules may use which kinds of credentials',
+		notes: ['One line per installed module that declares credentials in its yena.json'],
+		agent: 'safe',
+	},
+	{
+		name: 'grant',
+		usage: 'account grant <module> [kind]…',
+		description: 'Let a module use the credentials it declares',
+		args: [MODULE, {name: 'kind', description: 'A declared kind (default: every declared kind)'}],
+		notes: ['The module gets the access its yena.json declares: read, or write (also create and remove)', 'Only you can run it, never an assistant'],
+		agent: 'deny',
+	},
+	{
+		name: 'revoke',
+		usage: 'account revoke <module> [kind]…',
+		description: 'Take credential access away from a module',
+		args: [MODULE, {name: 'kind', description: 'A granted kind (default: all of them)'}],
+		notes: ['Only you can run it, never an assistant'],
+		agent: 'deny',
+	},
+	{
+		name: 'vault',
+		usage: 'account vault <subcommand>',
+		description: 'The key that encrypts the stored secrets',
+		args: [{name: 'subcommand', description: 'status, rotate or reset'}],
+		agent: 'confirm',
+		subcommands: [
+			{name: 'status', usage: 'account vault status', description: 'Whether the key is there and how many entries it encrypts', agent: 'safe'},
+			{
+				name: 'rotate',
+				usage: 'account vault rotate',
+				description: 'Encrypt everything under a new key and drop the old one',
+				notes: ['Resumes when run again after an interruption; the old key goes only when all succeeded'],
+				agent: 'deny',
+			},
+			{
+				name: 'reset',
+				usage: 'account vault reset',
+				description: 'Drop the secrets that cannot be decrypted; make a new key if needed',
+				notes: ['Asks you to type reset; what can be decrypted stays', 'For a lost key: restore the vault folder from a backup first if you can'],
+				agent: 'deny',
+			},
+		],
+	},
 ];
 
 const USAGE = 'account <subcommand>';
 
 const clip = (s: string) => s.slice(0, 40);
+
+// Who makes the accounts of a kind whose secret only a module sets.
+const MADE_BY: Record<string, string> = {'claude-login': 'claude auth login'};
 
 /** `--kind x --login y` → {kind: 'x', fields: {login: 'y'}}; values are single words. */
 function parseFlags(words: string[], allowKind: boolean): {kind?: string; fields: Record<string, string>} {
@@ -206,6 +262,89 @@ export function createCommand(deps: Deps): Command {
 		return wizard.addWizard(control, wizardDeps);
 	};
 
+	const grants = deps.grants ?? createGrants(deps.dataDir, log);
+	const declarers = () => (deps.build?.modules ?? []).filter(m => Object.keys(m.credentials ?? {}).length > 0);
+
+	async function showGrants(ctx: CommandContext): Promise<void> {
+		if (!deps.build) return ctx.print('This yena does not tell which modules declare credentials (an older host)');
+		const modules = declarers();
+		if (modules.length === 0) return ctx.print('No installed module declares credentials');
+		const table = await grants.all();
+		for (const m of modules) {
+			for (const [kind, declared] of Object.entries(m.credentials ?? {})) {
+				const granted = table[m.name]?.[kind];
+				const effective: CredentialAccess | undefined = granted === undefined ? undefined : declared === 'read' ? 'read' : granted;
+				ctx.print(`  ${m.name} · ${kind} · declared ${declared} · ${effective ? `granted ${effective}` : 'not granted'}`);
+			}
+		}
+	}
+
+	async function changeGrants(sub: 'grant' | 'revoke', args: string[], ctx: CommandContext): Promise<void> {
+		// An assistant run carries a signal; the agent policy already denies these, this is the second lock.
+		if (ctx.signal) throw new Error(`"account ${sub}" is only for you to run in the console, never for an assistant`);
+		const [module, ...kindArgs] = args;
+		if (!module) throw new Error(`Specify the module. Usage: account ${sub} <module> [kind]…`);
+		if (sub === 'revoke') {
+			const removed = await grants.revoke(module, kindArgs.length > 0 ? kindArgs : undefined);
+			log.info('credential grants revoked', {kinds: removed.length});
+			return ctx.print(removed.length > 0 ? `✓ ${clip(module)}: ${removed.join(', ')} revoked` : `${clip(module)} had no such grants`);
+		}
+		if (!deps.build) throw new Error('This yena does not tell which modules declare credentials (an older host); grants need a newer one');
+		const installed = deps.build.modules.find(m => m.name === module);
+		if (!installed) throw new Error(`Module "${clip(module)}" is not installed. See: mod list`);
+		const declared = installed.credentials ?? {};
+		if (Object.keys(declared).length === 0) throw new Error(`${installed.name} declares no credentials in its yena.json`);
+		const kinds = kindArgs.length > 0 ? kindArgs : Object.keys(declared);
+		const allow: Record<string, CredentialAccess> = {};
+		for (const kind of kinds) {
+			const access = Object.prototype.hasOwnProperty.call(declared, kind) ? declared[kind] : undefined;
+			if (!access) throw new Error(`${installed.name} did not declare credentials of kind "${clip(kind)}" in yena.json (declared: ${Object.keys(declared).join(', ')})`);
+			allow[kind] = access;
+		}
+		await grants.allow(installed.name, allow);
+		log.info('credential grants given', {kinds: Object.keys(allow).length});
+		ctx.print(`✓ ${installed.name} may now use: ${Object.entries(allow).map(([k, a]) => `${k} (${a})`).join(', ')}`);
+	}
+
+	async function vaultCommand(args: string[], ctx: CommandContext): Promise<void> {
+		const [action] = args;
+		switch (action) {
+			case 'status': {
+				const st = await store.vault.status();
+				const counts = await inventory(store);
+				ctx.print(`Vault key: ${st.state === 'ok' ? `present (key ${st.current}${st.kids.length > 1 ? ', a rotation is unfinished' : ''})` : st.state === 'none' ? 'not made yet' : 'missing or unusable'}`);
+				ctx.print(`  Encrypted: ${counts.encrypted}`);
+				if (counts.plaintext > 0) ctx.print(`  ${counts.plaintext} secret${counts.plaintext === 1 ? ' is' : 's are'} not encrypted yet (encrypted at the next start of yena)`);
+				if (counts.undecryptable > 0) ctx.print(`  Cannot be decrypted: ${counts.undecryptable} (restore the vault folder from a backup, or: account vault reset)`);
+				return;
+			}
+			case 'rotate': {
+				if (ctx.signal) throw new Error('"account vault rotate" is only for you to run in the console, never for an assistant');
+				const r = await rotate(store, log);
+				deps.onSecretsChanged?.();
+				return ctx.print(`✓ Vault key ${r.kid}: ${r.secrets} secret file${r.secrets === 1 ? '' : 's'} and ${r.keys} SSH key${r.keys === 1 ? '' : 's'} re-encrypted, the old key dropped`);
+			}
+			case 'reset': {
+				if (ctx.signal) throw new Error('"account vault reset" is only for you to run in the console, never for an assistant');
+				if (!ctx.mount || ctx.headless) throw new Error('"account vault reset" needs the app (./yena): you confirm it by typing there');
+				const counts = await inventory(store);
+				const {confirmView} = await import('./ui/confirm-view.js');
+				let confirmed = false;
+				const question = `Drop ${counts.undecryptable} entr${counts.undecryptable === 1 ? 'y' : 'ies'} that cannot be decrypted and make a new key if needed? Type reset`;
+				await ctx.mount(control => confirmView(control, question, 'reset', ok => (confirmed = ok)), {target: 'panel'});
+				if (!confirmed) return ctx.print('Cancelled, nothing changed');
+				const r = await reset(store, log);
+				deps.onSecretsChanged?.();
+				return ctx.print(`✓ Vault reset: ${r.secrets} secret${r.secrets === 1 ? '' : 's'} and ${r.keys} SSH key${r.keys === 1 ? '' : 's'} dropped${r.newKey ? ', a new key made' : ''}`);
+			}
+			case undefined:
+				if (ctx.showHelp) return ctx.showHelp(['vault']);
+				throw new Error('Usage: account vault status | account vault rotate | account vault reset');
+			default:
+				throw new Error(`Unknown subcommand "vault ${clip(action)}". See: account vault help`);
+		}
+	}
+
 	return {
 		name: 'account',
 		description: 'Accounts for services; secrets are never shown',
@@ -236,11 +375,12 @@ export function createCommand(deps: Deps): Command {
 				case 'show': {
 					const a = await store.get(checkName(args[0]));
 					const kind = await kinds.get(a.kind).catch(() => undefined);
-					const set = await store.secretNames(a.name);
+					const states = await store.secretStates(a.name);
+					const set = Object.keys(states);
 					ctx.print(`${a.name} · ${a.kind}${a.disabled ? ' [disabled]' : ''}`);
 					for (const f of kind?.fields ?? []) {
 						const mark = f.required ? '!' : '';
-						if (f.secret) ctx.print(`  ${f.key}${mark}: ${set.includes(f.key) ? 'set (hidden)' : 'not set'}`);
+						if (f.secret) ctx.print(`  ${f.key}${mark}: ${states[f.key] === undefined ? 'not set' : states[f.key] === 'broken' ? 'set (cannot be decrypted)' : 'set (hidden)'}`);
 						else ctx.print(`  ${f.key}${mark}: ${a.fields[f.key] ?? '-'}`);
 					}
 					if (kind?.ssh) ctx.print(`  SSH key: ${a.fingerprint ?? 'none'}`);
@@ -251,10 +391,12 @@ export function createCommand(deps: Deps): Command {
 				case 'fields': {
 					const a = await store.get(checkName(args[0]));
 					const kind = await kinds.get(a.kind);
-					const set = await store.secretNames(a.name);
+					const states = await store.secretStates(a.name);
+					const set = Object.keys(states);
 					ctx.print(`${a.name} · ${a.kind}${a.disabled ? ' [disabled]' : ''}`);
 					for (const f of fieldStatus(kind, a, set)) {
-						const label = f.key === SSH_KEY ? 'SSH key' : `${f.key}${f.required ? '!' : ''}${f.secret ? ' (secret)' : ''}`;
+						const broken = states[f.key] === 'broken' ? ', cannot be decrypted' : '';
+						const label = f.key === SSH_KEY ? 'SSH key' : `${f.key}${f.required ? '!' : ''}${f.secret ? ` (secret${broken})` : ''}`;
 						ctx.print(`  ${f.set ? '✓' : '✗'} ${label}`);
 					}
 					const missing = missingOf(kind, a, set);
@@ -269,6 +411,7 @@ export function createCommand(deps: Deps): Command {
 						true,
 					);
 					const kind = await kinds.get(flags.kind ?? DEFAULT_KIND);
+					if (isManagedKind(kind)) throw new Error(`Accounts of kind ${kind.name} are made by: ${MADE_BY[kind.name] ?? 'the module that uses them'}`);
 					if (noSsh && !kind.ssh) throw new Error(`--no-ssh: kind "${kind.name}" has no SSH key anyway`);
 					const account = await store.add({name: checkName(name), kind, fields: flags.fields, ...(noSsh && {ssh: false})});
 					log.info('account added', {kind: kind.builtin ? kind.name : 'custom', fields: Object.keys(flags.fields).length, ssh: account.publicKey !== undefined});
@@ -302,6 +445,7 @@ export function createCommand(deps: Deps): Command {
 					const def = kind.fields.find(f => f.key === field);
 					if (!field) throw new Error(`Specify the field: ${kind.fields.filter(f => f.secret).map(f => f.key).join(', ') || 'this kind has no secret fields'}`);
 					if (!def?.secret) throw new Error(`"${clip(field)}" is not a secret field of ${kind.name} (secret fields: ${kind.fields.filter(f => f.secret).map(f => f.key).join(', ') || 'none'})`);
+					if (def.managed) throw new Error(`"${field}" is set by the module that uses it (${MADE_BY[kind.name] ?? 'not by hand'}); it cannot be typed`);
 					if (flag !== undefined && flag !== '--clear') throw new Error(`Unknown option "${clip(flag)}"`);
 					if (flag === '--clear') {
 						await store.setSecret(account.name, field, undefined);
@@ -365,6 +509,13 @@ export function createCommand(deps: Deps): Command {
 					log.info('account removed');
 					return ctx.print(`✓ Account "${name}" deleted with its secrets and key`);
 				}
+				case 'grants':
+					return showGrants(ctx);
+				case 'grant':
+				case 'revoke':
+					return changeGrants(sub, args, ctx);
+				case 'vault':
+					return vaultCommand(args, ctx);
 				case 'help':
 				case undefined:
 					return ctx.showHelp ? ctx.showHelp() : ctx.print(USAGE);

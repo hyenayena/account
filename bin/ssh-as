@@ -7,19 +7,15 @@ shift 2
 case $name in
 	'' | *[!a-z0-9_-]*) echo "yena account: invalid account name" >&2; exit 1 ;;
 esac
-key="$dir/keys/$name"
-if [ -f "$key" ]; then
-	if [ -e "$key.disabled" ]; then
-		echo "yena account: account \"$name\" is disabled (settings → Accounts)" >&2
-		exit 1
-	fi
-	exec ssh -i "$key" -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new "$@"
+if [ -e "$dir/keys/$name.disabled" ]; then
+	echo "yena account: account \"$name\" is disabled (settings → Accounts)" >&2
+	exit 1
 fi
-# Where the key cannot be read (the chat's Bash sandbox), the account's agent signs; yena runs it only
-# for an enabled account with a key (src/agent.ts, same folder).
+# The key on disk is encrypted: only the account's agent signs. yena runs it for an enabled account with
+# a key and builds the same path (src/agent.ts, same folder).
 agent="/tmp/yena-account-$(id -u)-$(printf %s "$dir" | sha256sum | cut -c1-12)/$name.sock"
 if [ -S "$agent" ]; then
 	exec ssh -o IdentityAgent="$agent" -o StrictHostKeyChecking=accept-new "$@"
 fi
-echo "yena account: account \"$name\" has no usable SSH key here (unknown, disabled, or yena is not running)" >&2
+echo "yena account: account \"$name\": no running ssh agent (start yena once after the container started)" >&2
 exit 1

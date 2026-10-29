@@ -3,11 +3,14 @@ import type {Logger, ModulePlugin} from '../../../src/api.js';
 import {agentDirFor, createAgents, type Agents} from './agent.js';
 import {createCommand} from './commands.js';
 import {gitSshResolver} from './git.js';
+import {createGrants} from './grants.js';
 import {createKinds} from './kinds.js';
 import {noopLog} from './log.js';
+import {inventory, migrate} from './migrate.js';
+import {createProvider} from './provider.js';
 import {createStore, type Store} from './store.js';
 
-// Private keys never pass through yena's code, but if one ever reached a log line it is cut out.
+// Private keys never pass through yena's logs, but if one ever reached a log line it is cut out.
 const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
 // Shorter values would also cut ordinary words out of log lines.
 const MIN_REDACTED = 6;
@@ -41,20 +44,33 @@ function withAgents(store: Store, agents: Agents, log: Logger): Store {
 
 /** The plugin; `agents: false` leaves ssh-agents alone (tests that load the plugin). */
 export function createPlugin(opts: {agents?: boolean} = {}): ModulePlugin {
-	return host => {
+	return async host => {
 		const log = host.log ?? noopLog;
-		const raw = createStore(host.dataDir);
-		const store = opts.agents === false ? raw : withAgents(raw, createAgents({dir: agentDirFor(host.dataDir), configFile: path.join(host.dataDir, 'ssh_config'), keyPath: name => raw.keyPath(name)}), log);
+		const raw = createStore(host.dataDir, {log});
 		let redactSecrets = redactValues([]);
+		log.addRedactor(text => redactSecrets(redactPrivateKeys(raw.vault.redact(text))));
+		// Before the agents load keys: what 0.5.0 stored in plaintext is encrypted first.
+		await migrate(raw, log);
+		const left = await inventory(raw).catch(() => undefined);
+		if (left && left.plaintext > 0) log.warn('vault has unencrypted entries', {count: left.plaintext});
+		const store =
+			opts.agents === false
+				? raw
+				: withAgents(raw, createAgents({dir: agentDirFor(host.dataDir), configFile: path.join(host.dataDir, 'ssh_config'), privateKey: name => raw.privateKey(name)}), log);
 		const refresh = () =>
 			void store.allSecretValues().then(
 				values => (redactSecrets = redactValues(values)),
 				error => log.warn('secrets unreadable for the redactor', {err: error}),
 			);
 		refresh();
-		log.addRedactor(text => redactSecrets(redactPrivateKeys(text)));
+		const kinds = createKinds(host.dataDir);
+		const grants = createGrants(host.dataDir, log);
+		if (host.build) {
+			await grants.prune(host.build.modules.map(m => m.name)).catch(error => log.warn('grants not pruned', {err: error}));
+		}
 		host.registerGitSsh?.(gitSshResolver(name => store.get(name), host.dataDir));
-		return [createCommand({dataDir: host.dataDir, store, kinds: createKinds(host.dataDir), log, onSecretsChanged: refresh})];
+		host.registerCredentialProvider?.(createProvider({store, kinds, grants, log, onSecretsChanged: refresh}));
+		return [createCommand({dataDir: host.dataDir, store, kinds, grants, log, onSecretsChanged: refresh, ...(host.build && {build: host.build})})];
 	};
 }
 

@@ -6,8 +6,8 @@ import path from 'node:path';
 import {checkName, type Account} from './store.js';
 
 /**
- * One ssh-agent per enabled account with a key, so git can sign with the key from places that cannot read
- * it (the chat's Bash sandbox): `bin/ssh-as` uses the agent when the key file is out of reach. On tmpfs,
+ * One ssh-agent per enabled account with a key: the key is stored encrypted, so git signs only through the
+ * agent (`bin/ssh-as` and the ssh config below), in yena and in the chat's Bash sandbox. On tmpfs,
  * because unix sockets may not work on a folder mounted from the host; named after the data dir, so another
  * yena data dir (a test) never touches these agents. `bin/ssh-as` builds the same path.
  */
@@ -15,19 +15,22 @@ export const agentDirFor = (dataDir: string, uid: number = process.getuid?.() ??
 	`/tmp/yena-account-${uid}-${createHash('sha256').update(dataDir).digest('hex').slice(0, 12)}`;
 
 export type ToolResult = {code: number; stdout: string};
-export type AgentRun = (file: string, args: string[], socket?: string) => Promise<ToolResult>;
+/** `input` is written to the tool's stdin, which is then closed. */
+export type AgentRun = (file: string, args: string[], socket?: string, input?: Buffer) => Promise<ToolResult>;
 
 const TOOL_TIMEOUT_MS = 10_000;
 
 // Only PATH (and the agent socket for ssh-add): nothing from yena's environment reaches the agent.
-export const runAgentTool: AgentRun = (file, args, socket) =>
+export const runAgentTool: AgentRun = (file, args, socket, input) =>
 	new Promise(resolve => {
 		const env: Record<string, string> = {PATH: process.env.PATH ?? '/usr/bin:/bin'};
 		if (socket) env.SSH_AUTH_SOCK = socket;
-		execFile(file, args, {timeout: TOOL_TIMEOUT_MS, maxBuffer: 64 * 1024, env}, (error, stdout) => {
+		const child = execFile(file, args, {timeout: TOOL_TIMEOUT_MS, maxBuffer: 64 * 1024, env}, (error, stdout) => {
 			const code = error ? (typeof error.code === 'number' ? error.code : -1) : 0;
 			resolve({code, stdout: String(stdout)});
 		});
+		child.stdin?.on('error', () => undefined);
+		child.stdin?.end(input);
 	});
 
 export type Agents = {
@@ -44,14 +47,14 @@ const NO_KEYS = 1;
  * proxy), which wins over a repository's core.sshCommand, so ssh-as never runs there; this config, included
  * by the image's /etc/ssh/ssh_config (not ssh_config.d, which the sandbox hides), picks the agent of the repository's account
  * instead. It lives in the data dir because the sandbox cannot write there (a planted ProxyCommand would
- * run outside it). Command-line options win, so ssh-as with its key file is unaffected.
+ * run outside it).
  */
 export function sshConfigFor(accounts: {name: string; socket: string}[]): string {
 	const head = '# Written by yena (account module): a repository that uses an account signs through its ssh-agent.\n';
 	return head + accounts.map(a => `Match exec "git config --get yena.account | grep -qx ${checkName(a.name)}"\n\tIdentityAgent ${a.socket}\n`).join('');
 }
 
-export function createAgents(opts: {dir: string; configFile?: string; keyPath: (name: string) => string; run?: AgentRun; kill?: (pid: number) => void}): Agents {
+export function createAgents(opts: {dir: string; configFile?: string; privateKey: (name: string) => Promise<Buffer>; run?: AgentRun; kill?: (pid: number) => void}): Agents {
 	const dir = opts.dir;
 	const run = opts.run ?? runAgentTool;
 	const kill = opts.kill ?? killAgent;
@@ -79,7 +82,14 @@ export function createAgents(opts: {dir: string; configFile?: string; keyPath: (
 		const loaded = listed.code === 0 ? listed.stdout.trim().split('\n') : [];
 		if (loaded.length === 1 && account.fingerprint !== undefined && loaded[0]!.split(/\s+/)[1] === account.fingerprint) return;
 		if (listed.code === 0) await run('ssh-add', ['-D'], socket);
-		const added = await run('ssh-add', ['-q', opts.keyPath(account.name)], socket);
+		// "-" reads the key from stdin: decrypted, it exists only in memory, never as a file.
+		const key = await opts.privateKey(account.name);
+		let added: ToolResult;
+		try {
+			added = await run('ssh-add', ['-q', '-'], socket, key);
+		} finally {
+			key.fill(0);
+		}
 		if (added.code !== 0) throw new Error(`ssh-add failed (${added.code})`);
 	}
 

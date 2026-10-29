@@ -1,7 +1,7 @@
 import React, {useRef, useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 import type {MountControl, UiElement} from '../../../../src/api.js';
-import {missingOf, type Kind, type Kinds} from '../kinds.js';
+import {isManagedKind, missingOf, type Kind, type Kinds} from '../kinds.js';
 import {checkFields, NAME, type Account, type Store} from '../store.js';
 import {colorEnabled, ListPicker, SecretInput, TextField, useViewHost} from './kit.js';
 
@@ -15,7 +15,7 @@ type Step =
 	| {at: 'field'; kind: Kind; name: string; fields: Record<string, string>; index: number}
 	| {at: 'ssh'; kind: Kind; name: string; fields: Record<string, string>}
 	| {at: 'saving'}
-	| {at: 'secret'; kind: Kind; account: Account; index: number; saved: string[]}
+	| {at: 'secret'; kind: Kind; account: Account; index: number; saved: string[]; error?: string; attempt?: number}
 	| {at: 'done'; kind: Kind; account: Account; saved: string[]}
 	| {at: 'error'; message: string};
 
@@ -99,7 +99,8 @@ function Failed({control, message}: {control: MountControl; message: string}) {
 function Wizard({control, deps}: {control: MountControl; deps: WizardDeps}) {
 	const {store, kinds} = deps;
 	const [step, setStep] = useState<Step>({at: 'kind'});
-	const all = useRef(kinds.listSync()).current;
+	// Accounts whose secret only a module sets (claude-login) are not made here.
+	const all = useRef(kinds.listSync().filter(k => !isManagedKind(k))).current;
 	const cancel = () => control.close();
 	const host = control.host ? {host: control.host} : {};
 
@@ -118,7 +119,7 @@ function Wizard({control, deps}: {control: MountControl; deps: WizardDeps}) {
 		}
 	};
 
-	const secretFields = (kind: Kind) => kind.fields.filter(f => f.secret);
+	const secretFields = (kind: Kind) => kind.fields.filter(f => f.secret && !f.managed);
 
 	const nextSecret = (kind: Kind, account: Account, index: number, saved: string[]) => {
 		if (index < secretFields(kind).length) setStep({at: 'secret', kind, account, index, saved});
@@ -185,23 +186,26 @@ function Wizard({control, deps}: {control: MountControl; deps: WizardDeps}) {
 			const need = missingOf(step.kind, step.account, step.saved);
 			const required = need.some(m => m.split('|').includes(field.key));
 			return (
-				<SecretInput
-					key={`secret:${field.key}`}
-					label={`${field.key} for ${step.account.name}${required ? '' : ' (optional)'} · Esc skips the rest`}
-					optional
-					onSubmit={value => {
-						if (value === '') return nextSecret(step.kind, step.account, step.index + 1, step.saved);
-						store.setSecret(step.account.name, field.key, value).then(
-							() => {
-								deps.onSecretsChanged?.();
-								nextSecret(step.kind, step.account, step.index + 1, [...step.saved, field.key]);
-							},
-							(error: Error) => setStep({at: 'error', message: error.message}),
-						);
-					}}
-					onCancel={() => setStep({at: 'done', kind: step.kind, account: step.account, saved: step.saved})}
-					{...host}
-				/>
+				<>
+					{step.error && <Text color={tone('red')}>{step.error}</Text>}
+					<SecretInput
+						key={`secret:${field.key}:${step.attempt ?? 0}`}
+						label={`${field.key} for ${step.account.name}${required ? '' : ' (optional)'} · Esc skips the rest`}
+						optional
+						onSubmit={value => {
+							if (value === '') return nextSecret(step.kind, step.account, step.index + 1, step.saved);
+							store.setSecret(step.account.name, field.key, value).then(
+								() => {
+									deps.onSecretsChanged?.();
+									nextSecret(step.kind, step.account, step.index + 1, [...step.saved, field.key]);
+								},
+								(error: Error) => setStep({...step, error: error.message, attempt: (step.attempt ?? 0) + 1}),
+							);
+						}}
+						onCancel={() => setStep({at: 'done', kind: step.kind, account: step.account, saved: step.saved})}
+						{...host}
+					/>
+				</>
 			);
 		}
 		case 'done':

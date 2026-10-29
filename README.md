@@ -1,6 +1,6 @@
 # account
 
-Accounts for services, used blindly: the user (or the assistant, with the user's confirmation) creates them, secrets are typed only into a hidden input, and the assistant and other modules use an account by its name without its secrets ever reaching the chat, the console or the logs. Kind: internal (planned manifest field). A yena plugin; depends on `core` (for the hidden input).
+Every credential of yena, used blindly: the user (or the assistant, with the user's confirmation) creates accounts, secrets are typed only into a hidden input or set by a module through the host's credential channel, everything secret is encrypted at rest, and other modules use an account by its name without its secrets reaching the chat, the console or the logs. Kind: internal (planned manifest field). A yena plugin; depends on `core` (for the hidden input).
 
 ## Kinds
 
@@ -8,62 +8,81 @@ Every account has a kind: the service it is for and the fields it holds. A field
 
 Fields are optional unless marked required (`!`). A kind may also have one-of groups: at least one member of each must be set (`ssh` in a group stands for the account's SSH key). An account that lacks something is still saved (secrets come after `add`), and is shown as `[incomplete: …]` until it is filled in.
 
-- `github` is built in: `login`, `email`, `token` (secret), an SSH key generated with the account unless `--no-ssh`, and the group `ssh | token` (a key for git, a token for the API; either is enough). It is the default kind.
-- Your own: `account kind add svc user! password:secret apiKey:secret --one-of password,apiKey` (`:secret` marks a secret, a trailing `!` a required field; names are a letter then letters, digits or `_`, at most 32 characters, `ssh` reserved; at most 20 fields and 10 groups; a group has two or more fields that are not required). Kinds live in `kinds.json`; one with accounts cannot be removed.
+Built in:
+- `github`: `login`, `email`, `token` (secret), an SSH key generated with the account unless `--no-ssh`, and the group `ssh | token` (a key for git, a token for the API; either is enough). It is the default kind.
+- `anthropic-key`: `key` (secret, required): an Anthropic API key, checked to look like `sk-ant-…` (not a subscription token).
+- `anthropic-token`: `token` (secret, required): a subscription (setup) token, checked to look like `sk-ant-oat…`.
+- `claude-login`: `email`, `method` (`claude.ai` or `console`), `login` (secret, required, **managed**): a Claude Code login as a JSON blob of at most 64 KiB (`credentials.claudeAiOauth` or `primaryApiKey`). A managed field is set only by the module that uses it, through the credential channel (`claude auth login`); `account secret` refuses it, `account add` and the form do not make `claude-login` accounts.
+
+Checks and `managed` exist only on built-in kinds; the kinds file cannot set them or shadow a built-in kind. Your own kinds: `account kind add svc user! password:secret apiKey:secret --one-of password,apiKey` (`:secret` marks a secret, a trailing `!` a required field; names are a letter then letters, digits or `_`, at most 32 characters, `ssh` reserved; at most 20 fields and 10 groups; a group has two or more fields that are not required). Kinds live in `kinds.json`; one with accounts cannot be removed. Values of secret fields are 1 to 8192 characters (64 KiB for a login blob); messages about a refused value never repeat it.
 
 ## Commands
+
+`help account` (and `account <subcommand> help`) gives the generated usage; in short:
 
 | Command | Agent policy | What it does |
 |---|---|---|
 | `account new` | confirm | The step-by-step form (as in settings → Accounts) in the console panel; needs the app |
 | `account list [kind]` (`ls`) | safe | `name · kind · public fields`, `[disabled]`, `[incomplete: …]` |
-| `account show <name>` | safe | Public fields, `set (hidden)` / `not set` for each secret (`!` on required ones), the SSH key fingerprint or `none`, `Missing: …` |
-| `account fields <name>` | safe | Every field of the account's kind, the SSH key included, as `✓` (filled in) or `✗` (empty), `!` on required ones, `(secret)` on secrets; no values at all; then `Complete` or `Missing: …` |
-| `account add <name> [--kind <kind>] [--<field> <value>]… [--no-ssh]` | confirm | Creates an account (kind `github` by default, which also gets an ed25519 key unless `--no-ssh`: the public key is printed with a link to add it on GitHub) and says what is still needed. A secret field given here is refused |
-| `account set <name> --<field> <value>…` | confirm | Changes public fields (merged; the kind cannot change) |
-| `account secret <name> <field>` | confirm | Opens the hidden input in the console panel; what is typed is saved and only `✓ <name>: <field> saved` is printed. Needs the app (`./yena`), refused from the host terminal |
-| `account secret <name> <field> --clear` | confirm | Removes the secret |
-| `account kinds` | safe | The kinds, their fields (`!` required), SSH key, one-of groups |
-| `account kind add <kind> <field>[:secret][!]… [--one-of <a,b>]…`, `account kind remove <kind>` | confirm | Defines or removes a kind of your own (nested subcommands; `account kind` alone shows its help) |
+| `account show <name>` | safe | Public fields, `set (hidden)` / `not set` / `set (cannot be decrypted)` for each secret, the SSH key fingerprint or `none`, `Missing: …` |
+| `account fields <name>` | safe | Every field of the kind as `✓`/`✗`, no values; then `Complete` or `Missing: …` |
+| `account add <name> [--kind <kind>] [--<field> <value>]… [--no-ssh]` | confirm | Creates an account (a `github` one gets an ed25519 key unless `--no-ssh`; the public key is printed with a link). Secret fields and `claude-login` are refused |
+| `account set <name> --<field> <value>…` | confirm | Changes public fields |
+| `account secret <name> <field> [--clear]` | confirm | Opens the hidden input in the console panel (value checked by its kind), or clears the secret. Needs the app; refuses a managed field |
+| `account kinds`, `account kind add|remove …` | safe / confirm | The kinds; define or remove your own |
 | `account key <name>` | safe | The public SSH key |
-| `account use <name> [repo dir]` | confirm | In that repository (default: the current directory): `core.sshCommand` through `bin/ssh-as`, `user.name` (login, else name), `user.email`, `yena.account`; then plain `git push` goes out as the account |
-| `account unuse [repo dir]` | confirm | Unsets those four keys (a local `user.name`/`user.email` set before `use` is gone too) |
-| `account which [repo dir]` | safe | The account a repository uses |
-| `account disable <name>`, `enable <name>` | confirm | A disabled account gives no secrets to modules and fails in every repository that uses it |
+| `account use <name> [dir]`, `unuse [dir]`, `which [dir]` | confirm / confirm / safe | Make git in a repository push, pull and commit as the account (`core.sshCommand` through `bin/ssh-as`, `user.name`, `user.email`, `yena.account`), undo it, or show it |
+| `account disable|enable <name>` | confirm | A disabled account gives no secrets to modules and fails in every repository that uses it |
 | `account remove <name>` (`rm`) | confirm | Deletes the account with its secrets and key |
-| `account help` | safe | The generated help (core); `account <subcommand> help` and `help account <subcommand>` work too, and `--<field> <value>` is documented for the account fields |
+| `account grants` | safe | `module · kind · declared … · granted …|not granted` for every installed module that declares credentials |
+| `account grant <module> [kind]…` | deny | Gives the module the access its `yena.json` declares, for the given kinds (none: all declared); refuses modules that are not installed and kinds they did not declare |
+| `account revoke <module> [kind]…` | deny | Takes the grants away (none: all of them) |
+| `account vault status` | safe | Whether the key is there, its id, how many entries are encrypted, still plaintext, or cannot be decrypted |
+| `account vault rotate` | deny | A new key; everything re-encrypted and verified; the old key dropped only when all succeeded (run again to resume) |
+| `account vault reset` | deny | After you type `reset`: drops the secrets and SSH keys that cannot be decrypted and makes a new key when none is usable. Needs the app |
 
-Account names: `a-z`, `0-9`, `-`, `_`, at most 32 characters. Values are single words (the console splits on whitespace).
+`grant`, `revoke`, `vault rotate` and `vault reset` are also refused for any assistant run (`ctx.signal`), and the scheduler refuses them through their `deny` policy. There is no export command.
 
-When the assistant runs `account secret`, the hidden input opens in the console panel for the user to type; the assistant gets only the `saved` or `Cancelled` line.
+Account names: `a-z`, `0-9`, `-`, `_`, at most 32 characters. Values are single words (the console splits on whitespace). When the assistant runs `account secret`, the hidden input opens in the console panel for the user to type; the assistant gets only the `saved` or `Cancelled` line.
 
 ## Settings
 
 An `Accounts` tab, read when the settings screen opens:
-- `▸ Add account…` opens the step-by-step form in place of the list: pick the kind, type the name, then each public field (`(optional)` ones are skipped with an empty Enter), for `github` choose whether to generate an SSH key, then each secret in core's hidden input (empty Enter skips one; Esc skips the rest and keeps the account). The last screen shows what was created, the public key with the GitHub link (`c` copies it), and what is still needed. Esc before the account is created cancels without saving anything. Closing the form returns to the list with the new account in it.
+- `▸ Add account…` opens the step-by-step form: pick the kind (`claude-login` is not offered), type the name, then each public field, for `github` choose whether to generate an SSH key, then each secret in core's hidden input (empty Enter skips one; Esc skips the rest and keeps the account; a value its kind refuses shows the reason and the input asks again). The last screen shows what was created, the public key with the GitHub link (`c` copies it), and what is still needed.
 - One row per account (`name · kind`, public fields) with `Active`, `Disabled` and `Delete`.
-
-The same form is `account new`. The commands remain for scripts and the assistant.
 
 ## For other modules
 
-Add `"account": "account"` to `dependencies`, re-export what you use from `src/deps/account.ts`, and import `src/public.ts` there:
+Secret values go only through the host's credential channel, never through an import:
+- Declare the kinds you use in your `yena.json`: `"credentials": {"anthropic-key": "write", "claude-login": "read"}` (`write` includes read, create and remove).
+- Use `host.credentials` (`grants()`, `list(kind?)`, `read(account, field)`, `write(account, field, value | undefined)`, `create({name, kind, fields?})`, `remove(account)`). Nothing works until the user runs `account grant <module>`; a refusal throws with `code: 'CREDENTIAL_ACCESS'` and the hint `account grant <module>`. Register a redactor for every value you read and never print, log or hand it to an assistant.
 
-- `accountsFor(ownDataDir)`: `kinds()`, `list(kind?)` and `get(name)` give `{name, kind, fields, secrets: string[] (names of the set ones), disabled, ssh, missing: string[]}` (`missing`: required fields not set and `a|b` for an unmet group, so a module can tell the user what to add, e.g. `account secret <name> token`); `kinds()` gives `{name, fields: [{key, secret, required}], ssh, oneOf, builtin}`; `secret(name, field)` gives the value for in-process use, `undefined` when unset or the account is disabled. Never print, log or hand the value to an assistant; register it with `log.addRedactor` if it may end up in text.
-- `secretDirsFor(ownDataDir)`: the directories that hold credentials, for a policy that guards an assistant.
+The public entry (`src/public.ts`, through your adapter `src/deps/account.ts`, with `account` in `dependencies`) has no values any more:
+- `accountsFor(ownDataDir)`: `kinds()`, `list(kind?)`, `get(name)` → `{name, kind, fields, secrets (names of the set ones), disabled, ssh, missing}`.
+- `deniedPathsFor(ownDataDir)`: everything in the account data dir an assistant must not reach: the accounts file, the kinds file, `secrets`, `keys`, `disabled`, `vault` and the grants file (not `ssh_config`, which ssh reads in the chat's sandboxed Bash). `secretDirsFor` is a deprecated alias of it.
 - `accountDataDirFor(ownDataDir)`: this module's data dir; only account knows the layout.
+
+## Grants
+
+The user decides which module may use which kinds; account keeps that decision, applies it and logs every use. The host only binds identity: each call to the provider carries the calling module's name and its `yena.json` declaration.
+- Effective access to a kind = the lower of what the module declares and what was granted. An undeclared kind is refused (`<module> did not declare credentials of kind "<kind>" in yena.json`) even when the grants file names it; no access, or read-only access for a change, is refused with `CREDENTIAL_ACCESS`. `list` returns only kinds the caller may read; for `read`, `write` and `remove` the kind comes from the stored account. A caller that may not use any kind at all is refused before the store is read.
+- The grants live in `grants.json` (0600, written atomically, never through a symlink, at most 64 KiB, re-read when it changes). A file that cannot be read or parsed counts as no grants (one warning). At load the grants of modules that are no longer installed are dropped.
+- Audit record per call: `credential access` `{module, op, kind?, account?, outcome: ok|denied|missing|error, errClass?}`; never values or lengths.
+- Honest scope: in one process this is a guard and an audit point, not a hard boundary; the boundary against the model is the chat's policy and sandbox.
 
 ## Private modules
 
-At load the plugin registers a resolver with the host (`host.registerGitSsh`, hosts that have it): `mod install --account <name> <module>…` then fetches over ssh with `GIT_SSH_COMMAND` set to the same `bin/ssh-as` wrapper `account use` writes (`git.ts` `gitSshResolver`). The account must exist, be enabled and have an SSH key with read access to the repository; the host keeps the account name in `yena-modules.json` for restores and updates. The container has no host ssh-agent, so this is how private modules are installed (the official ones are public and need no account).
+At load the plugin registers a resolver with the host (`host.registerGitSsh`): `mod install --account <name> <module>…` fetches over ssh with `GIT_SSH_COMMAND` set to `bin/ssh-as` (`git.ts` `gitSshResolver`). The account must exist, be enabled and have an SSH key with read access to the repository; it signs through the account's agent, which yena runs.
 
 ## How secrets stay blind
 
-- Secrets are typed into core's `SecretInput` (the value lives in a ref and is never rendered) and written straight to `secrets/<name>.json`. No command takes a secret as an argument, and no command prints one.
-- SSH private keys are written by `ssh-keygen` straight into `keys/` and never read by yena's code; git uses them through `bin/ssh-as` (`ssh -i <key> -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new`), so the user's own ssh-agent is never involved and `.git/config` holds only the wrapper and the account name.
-- Each enabled account with a key gets its own `ssh-agent`, started by the plugin and brought in line after every add, disable, enable and remove (`src/agent.ts`; the agent of a disabled or removed account is killed). `bin/ssh-as` uses the key file where it can read it (yena itself, `mod install --account`) and the account's agent where it cannot (the claude chat's Bash sandbox, which hides `keys/`), so the key never leaves yena. Inside Claude Code's Bash sandbox git does not run `ssh-as` at all: the sandbox sets its own `GIT_SSH_COMMAND` (ssh through its proxy), which wins over `core.sshCommand`. For that case the plugin also writes `ssh_config` (a `Match exec` on the repository's `yena.account` per agent, setting `IdentityAgent`), which the image includes from its main `/etc/ssh/ssh_config` (Claude Code's sandbox hides `/etc/ssh/ssh_config.d`, so a drop-in there is never read in Bash); plain `git push` in the chat then signs as the repository's account. The file sits in the data dir because the sandbox cannot write there: a `ProxyCommand` planted in an ssh config would run outside it. Options on the command line win, so `ssh-as` with a readable key is unaffected. The agents get only `PATH` from yena's environment.
-- A log redactor replaces private key blocks with `[private key]` and every stored secret value of 6 or more characters with `[secret]` (refreshed when a secret changes). Log records carry no names, fields or values.
-- The claude chat lets its Read, Glob, Grep and Edit tools reach only the project, the md hub and its config dir, so this data dir is out of their reach. Its Bash check only names `accounts.json`; see the risks.
+- Secrets are typed into core's `SecretInput` (the value lives in a ref and is never rendered) or written by a granted module, checked by their kind, and stored encrypted. No command takes a secret as an argument, and no command prints one.
+- **Encryption at rest** (`src/vault.ts`, the only code that touches the key): every secret value and SSH private key is encrypted with AES-256-GCM under a 32-byte key in `vault/key`, with a fresh 12-byte IV per write, in a versioned envelope `{v: 1, kid, iv, ct, tag}`. The associated data binds an envelope to its place (`account-secret\0<account>\0<field>`, `account-ssh\0<account>`), so a blob moved to another account or field does not decrypt. Any problem (tampering, another key, an unknown key id, a bad version) fails closed with `A stored secret of account "<name>" cannot be decrypted (tampered or a different vault key)`; there is no plaintext fallback. A missing or unusable key while encrypted data exists is never replaced silently: `The account vault key is missing or does not match; stored secrets cannot be read. Restore the vault folder from a backup, or run: account vault reset (drops the unreadable secrets)`. The key file is made exclusively (`link`, never overwritten), read only when it is a regular file (no symlinks), at most 4 KiB; its base64 is masked in the log once loaded.
+- Honest scope: the key next to the data protects copies of the secrets (backups, a copied folder, accidental output, a single deny gap on `secrets/` or `keys/`), not code running as the same user that can read both. Against the model the boundary stays the deny rules, which now have two separate things to reach. The one plaintext exception is Claude Code's working copy of a login in the claude module's `config/` (the CLI reads it; denied to the model).
+- SSH keys are generated in node (`generateKeyPairSync('ed25519')`, serialized in memory to OpenSSH format by `src/openssh.ts`) and stored only encrypted; the public key and its SHA256 fingerprint are computed in code. Each enabled account with a key gets its own `ssh-agent` (`src/agent.ts`), into which the decrypted key is loaded with `ssh-add -` over stdin: no plaintext key file ever exists, not in `/tmp` either. `bin/ssh-as` signs only through that agent; inside Claude Code's Bash sandbox git does not run `ssh-as` (the sandbox sets its own `GIT_SSH_COMMAND`), so the plugin also writes `ssh_config` (a `Match exec` on the repository's `yena.account` per agent, setting `IdentityAgent`), included by the image's `/etc/ssh/ssh_config`. The agents get only `PATH` from yena's environment.
+- **Migration** (`src/migrate.ts`, at plugin load before the agents start, under `vault/migrate.lock`, stale after 2 minutes): a plaintext secrets file of 0.5.0 is encrypted field by field into a temp file, read back, decrypted and compared byte for byte, then renamed over the old file; a plaintext private key is encrypted to `<name>.enc`, read back and compared, then unlinked. Idempotent and resumable (an `.enc` left by a crash is verified against the plaintext before the plaintext goes). Until an entry is migrated it is read as plaintext; a warning at start and `account vault status` count what is left. Logs `vault migrated {secrets, keys}` / `vault migration failed {errClass, step}`, no names or values.
+- A log redactor masks private key blocks, the vault key, every stored secret value of 6 or more characters and every string of 16 or more characters inside a stored JSON secret (the tokens of a login blob), refreshed when a secret changes; undecryptable secrets are skipped with a warning.
+- Policies: `deniedPathsFor` gives the claude module the paths its chat denies.
 
 ## Environment
 
@@ -71,15 +90,17 @@ None.
 
 ## Data
 
-Under `<YENA_DATA>/account` (dir 0700; files 0600, written atomically):
+Under `<YENA_DATA>/account` (dir 0700; files 0600, written atomically through an exclusive temp file):
 - `accounts.json`: `{v: 2, accounts: [{name, kind, fields: {public…}, publicKey?, fingerprint?, createdAt}]}` (version 1 of 0.1.0, GitHub only, is read as kind `github`).
-- `kinds.json`: `{v: 1, kinds: [{name, fields: [{key, secret, required}], oneOf?: [[key…]…]}]}` (built-in kinds are not stored; a field without `required`, as written by 0.2.0, is optional).
-- `secrets/<name>.json` (dir 0700): `{field: value}`.
-- `keys/` (0700): `<name>` (private key), `<name>.pub`, `<name>.disabled` (marker `ssh-as` checks).
+- `kinds.json`: `{v: 1, kinds: [{name, fields: [{key, secret, required}], oneOf?}]}` (built-in kinds are not stored).
+- `secrets/<name>.json` (dir 0700): `{v: 2, fields: {field: envelope}}` (0.5.0's plaintext `{field: value}` is still read until migrated). A `claude-login` secret is a JSON blob of up to 64 KiB.
+- `keys/` (0700): `<name>.enc` (encrypted private key), `<name>.pub` (public key, 0644), `<name>.disabled` (marker `ssh-as` checks).
+- `vault/` (0700): `key` (0600: `{v: 1, current, keys: [{kid, key}]}`; two keys only during a rotation), `migrate.lock` while migrating, `key.unusable` after a reset moved an unusable key aside.
+- `grants.json`: `{v: 1, grants: {module: {kind: 'read'|'write'}}}`.
 - `disabled/<name>`: marker of a disabled account.
 - `ssh_config` (0644): rewritten after every agent sync; included by the image's ssh config.
 
-Outside it, on tmpfs (unix sockets may not work on a folder mounted from the host): `/tmp/yena-account-<uid>-<12 hex of sha256(data dir)>/` (0700) with `<name>.sock` and `<name>.pid` of each agent; `bin/ssh-as` builds the same path.
+Outside it, on tmpfs: `/tmp/yena-account-<uid>-<12 hex of sha256(data dir)>/` (0700) with `<name>.sock` and `<name>.pid` of each agent; `bin/ssh-as` builds the same path.
 
 ## Events
 
@@ -87,19 +108,22 @@ None.
 
 ## Dependencies
 
-`core` (its kit's `SecretInput`, loaded only by `account secret`). Needs `ssh`, `ssh-keygen`, `ssh-agent`, `ssh-add`, `sha256sum` and `git` on `PATH` (in the yena image).
+`core` (its kit's `SecretInput` and `TextField`). Needs `ssh`, `ssh-agent`, `ssh-add`, `sha256sum` and `git` on `PATH` (in the yena image); `ssh-keygen` is no longer used.
 
 ## Limits and known risks
 
-- The assistant runs as root in the same container: the files are protected by the chat's policy, not by the operating system. The chat's Bash check does not name `secrets/` and `keys/` yet, so a shell command that reads them is not stopped (the fix belongs in the claude module, through `secretDirsFor`). Full isolation needs the secrets outside the container (planned).
-- Anything that can reach an agent socket can sign as that account (never read the key): in the container that is yena, and the chat's Bash, whose sandbox allows unix sockets for this. Disable an account to take its agent away.
-- A module that receives a secret through `secret()` holds it in memory; what it does with it is up to that module.
-- `bin/ssh-as` is referenced by its absolute path in each repository's `.git/config`: moving the module breaks `git push` there until `account use` runs again. Only ssh remotes use the account; `https://` remotes keep the user's own credentials. `StrictHostKeyChecking=accept-new` trusts a host key on first use.
-- Two yena processes changing accounts at the same moment can lose one change (each write is atomic, read-modify-write is not).
+- **Losing the key loses the secrets.** Back up the `vault` folder together with `secrets/` and `keys/`; without it, restore it from a backup or run `account vault reset` (drops what cannot be decrypted; SSH keys must then be made again and added on GitHub).
+- The plaintext files removed by the migration are unlinked, not securely wiped: their blocks may stay on the disk.
+- `git push` as an account (from yena, a shell or the chat) needs the account's agent, which yena starts at plugin load (headless console lines too): after the container started, start yena once. `mod install --account` runs inside yena and is unaffected.
+- The assistant runs as root in the same container: the files are protected by the chat's policy and sandbox, not by the operating system; the key next to the data does not stop code that can read both.
+- Anything that can reach an agent socket can sign as that account (never read the key): yena, and the chat's Bash, whose sandbox allows unix sockets for this. Disable an account to take its agent away.
+- A module that receives a secret through the channel holds it in memory; grants guard and log the access in one process, they are not a hard boundary.
+- `bin/ssh-as` is referenced by its absolute path in each repository's `.git/config`; only ssh remotes use the account. `StrictHostKeyChecking=accept-new` trusts a host key on first use.
+- Two yena processes changing the same account at the same moment can lose one change (each write is atomic, read-modify-write of one secrets file is not locked).
 
 ## Layout
 
-`src/`: `index.ts` (plugin, redactors), `commands.ts` (the `account` command, the settings tab), `kinds.ts` (built-in and own kinds), `store.ts` (accounts, secrets, keys), `git.ts` (`use`, `unuse`, `which`, the `mod install --account` resolver), `agent.ts` (the ssh-agents), `public.ts` (entry for other modules), `ui/secret-view.tsx` and `ui/kit.ts` (adapter to core's kit). `bin/ssh-as`. Tests: `tests/{store,kinds,git,agent,commands,public}.test.ts` (`agent.test.ts` also runs the real `ssh-agent`). Tests that load the plugin use `createPlugin({agents: false})`.
+`src/`: `index.ts` (plugin, redactors, migration at load, provider registration, grant pruning), `commands.ts` (the `account` command, the settings tab), `kinds.ts` (built-in and own kinds), `validate.ts` (secret checks, JSON leaves for the redactor), `store.ts` (accounts, encrypted secrets and keys), `vault.ts` (key and envelopes), `openssh.ts` (key generation), `migrate.ts` (migration, rotation, reset, counts), `grants.ts` (the grants file), `provider.ts` (the credential provider: checks and audit), `git.ts`, `agent.ts` (the ssh-agents), `public.ts` (entry for other modules), `ui/` (form, hidden input, typed confirmation, kit adapter). `bin/ssh-as`. Tests: `tests/{store,kinds,validate,vault,migrate,openssh,provider,git,agent,commands,public}.test.ts`, `tests/ui/wizard.test.tsx` (`agent.test.ts` and `openssh.test.ts` also run the real `ssh-agent`). Tests that load the plugin use `createPlugin({agents: false})`.
 
 ## Development
 

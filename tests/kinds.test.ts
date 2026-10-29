@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import {stat, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {test} from 'node:test';
-import {createKinds, missingOf, parseFields} from '../src/kinds.js';
+import {createKinds, isManagedKind, missingOf, parseFields} from '../src/kinds.js';
 import {github, tmp} from './helpers.js';
+
+const BUILT_IN = ['github', 'anthropic-key', 'anthropic-token', 'claude-login'];
 
 test('github is built in: login, email, a secret token, an SSH key, and one of key or token', async () => {
 	const [first] = await createKinds(await tmp()).list();
@@ -37,9 +39,9 @@ test('a kind of your own with required fields and a one-of group is saved, liste
 	});
 	assert.equal((await stat(path.join(dir, 'kinds.json'))).mode & 0o777, 0o600);
 	assert.deepEqual(await createKinds(dir).get('svc'), svc);
-	assert.deepEqual(createKinds(dir).listSync().map(k => k.name), ['github', 'svc']);
+	assert.deepEqual(createKinds(dir).listSync().map(k => k.name), [...BUILT_IN, 'svc']);
 	await kinds.remove('svc');
-	assert.deepEqual((await kinds.list()).map(k => k.name), ['github']);
+	assert.deepEqual((await kinds.list()).map(k => k.name), BUILT_IN);
 });
 
 test('a kinds file of 0.2.0 (no required, no groups) still reads', async () => {
@@ -74,4 +76,39 @@ test('missingOf names required fields and unmet groups', () => {
 	assert.deepEqual(missingOf(github, {fields: {}}, []), ['ssh|token']);
 	assert.deepEqual(missingOf(github, {fields: {}, publicKey: 'ssh-ed25519 AAAA'}, []), []);
 	assert.deepEqual(missingOf(github, {fields: {}}, ['token']), []);
+});
+
+test('the Anthropic kinds are built in, with checks and a managed login', async () => {
+	const kinds = createKinds(await tmp());
+	assert.deepEqual((await kinds.get('anthropic-key')).fields, [{key: 'key', secret: true, required: true, check: 'anthropic-key'}]);
+	assert.deepEqual((await kinds.get('anthropic-token')).fields, [{key: 'token', secret: true, required: true, check: 'anthropic-token'}]);
+	const login = await kinds.get('claude-login');
+	assert.deepEqual(login.fields, [
+		{key: 'email', secret: false, required: false},
+		{key: 'method', secret: false, required: false},
+		{key: 'login', secret: true, required: true, check: 'claude-login', managed: true},
+	]);
+	assert.equal(login.ssh, false);
+	assert.equal(isManagedKind(login), true);
+	assert.equal(isManagedKind(await kinds.get('anthropic-key')), false);
+	for (const name of ['anthropic-key', 'anthropic-token', 'claude-login']) await assert.rejects(kinds.add(name, ['x']), /already exists/);
+});
+
+test('the kinds file cannot shadow a built-in kind or set check and managed', async () => {
+	const dir = await tmp();
+	await writeFile(
+		path.join(dir, 'kinds.json'),
+		JSON.stringify({
+			v: 1,
+			kinds: [
+				{name: 'anthropic-key', fields: [{key: 'key', secret: false}]},
+				{name: 'mine', fields: [{key: 'token', secret: true, required: true, check: 'claude-login', managed: true}]},
+			],
+		}),
+	);
+	const kinds = createKinds(dir);
+	assert.deepEqual((await kinds.get('anthropic-key')).fields[0], {key: 'key', secret: true, required: true, check: 'anthropic-key'});
+	assert.deepEqual((await kinds.get('mine')).fields, [{key: 'token', secret: true, required: true}]);
+	assert.throws(() => parseFields(['token:managed']), /Invalid field/);
+	assert.throws(() => parseFields(['token:check']), /Invalid field/);
 });
