@@ -59,7 +59,7 @@ test('secretLeaves: long string leaves of a JSON object, nothing for other value
 	const refresh = 'r'.repeat(16);
 	const blob = JSON.stringify({
 		credentials: {claudeAiOauth: {accessToken: access, refreshToken: refresh, expiresAt: 123, scopes: ['user:inference', 'x'.repeat(20)]}},
-		oauthAccount: {emailAddress: 'someone.long@example.com'},
+		oauthAccount: {emailAddress: 'someone.long@example.com', displayName: 'Firstname Lastname', organizationName: "Someone's Organization"},
 		short: 'abc',
 	});
 	assert.deepEqual(secretLeaves(blob).sort(), [access, refresh, 'x'.repeat(20)].sort());

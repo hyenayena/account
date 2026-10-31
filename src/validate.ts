@@ -51,7 +51,7 @@ export function secretLeaves(value: string): string[] {
 	const leaves: string[] = [];
 	const walk = (v: unknown, depth: number) => {
 		if (typeof v === 'string') {
-			if (v.length >= MIN_LEAF && !EMAIL.test(v)) leaves.push(v);
+			if (v.length >= MIN_LEAF && !EMAIL.test(v) && !/\s/.test(v)) leaves.push(v);
 		} else if (depth < MAX_DEPTH && typeof v === 'object' && v !== null) {
 			for (const child of Object.values(v)) walk(child, depth + 1);
 		}
