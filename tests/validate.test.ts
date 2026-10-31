@@ -66,3 +66,9 @@ test('secretLeaves: long string leaves of a JSON object, nothing for other value
 	assert.deepEqual(secretLeaves(fakeKey), []);
 	assert.deepEqual(secretLeaves('[1,2]'), []);
 });
+
+test('secretLeaves: a passphrase with spaces stays a secret, only display and organization names are skipped', () => {
+	const phrase = 'correct horse battery staple';
+	const blob = JSON.stringify({password: phrase, nested: {displayName: 'Another Long Name Here'}, list: ['Some Long Spaced Value']});
+	assert.deepEqual(secretLeaves(blob).sort(), [phrase, 'Some Long Spaced Value'].sort());
+});

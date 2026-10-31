@@ -45,15 +45,20 @@ export function checkSecret(kind: Kind | undefined, field: string, value: string
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const PUBLIC_LEAF_KEYS = new Set(['displayName', 'organizationName']);
+
 export function secretLeaves(value: string): string[] {
 	const root = parseObject(value);
 	if (!root) return [];
 	const leaves: string[] = [];
 	const walk = (v: unknown, depth: number) => {
 		if (typeof v === 'string') {
-			if (v.length >= MIN_LEAF && !EMAIL.test(v) && !/\s/.test(v)) leaves.push(v);
+			if (v.length >= MIN_LEAF && !EMAIL.test(v)) leaves.push(v);
 		} else if (depth < MAX_DEPTH && typeof v === 'object' && v !== null) {
-			for (const child of Object.values(v)) walk(child, depth + 1);
+			for (const [key, child] of Object.entries(v)) {
+				if (!Array.isArray(v) && PUBLIC_LEAF_KEYS.has(key)) continue;
+				walk(child, depth + 1);
+			}
 		}
 	};
 	walk(root, 0);
