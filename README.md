@@ -6,7 +6,7 @@ Every credential of yena, used blindly: the user (or the assistant, with the use
 
 Every account has a kind: the service it is for and the fields it holds. A field is public (shown, typed on the command line) or secret (never shown, typed only into the hidden input).
 
-Fields are optional unless marked required (`!`). A kind may also have one-of groups: at least one member of each must be set (`ssh` in a group stands for the account's SSH key). An account that lacks something is still saved (secrets come after `add`), and is shown as `[incomplete: …]` until it is filled in.
+Fields are optional unless marked required (`!`). A kind may also have one-of groups: at least one member of each must be set (`ssh` in a group stands for the account's SSH key). An account that lacks something is still saved (secrets come after `add`), and is shown as `incomplete: …` in the State column of `account list` until it is filled in.
 
 Built in:
 - `github`: `login`, `email`, `token` (secret), an SSH key generated with the account unless `--no-ssh`, and the group `ssh | token` (a key for git, a token for the API; either is enough). It is the default kind.
@@ -23,7 +23,7 @@ Checks and `managed` exist only on built-in kinds; the kinds file cannot set the
 | Command | Agent policy | What it does |
 |---|---|---|
 | `account new` | confirm | The step-by-step form (as in settings → Accounts) in the console panel; needs the app |
-| `account list [kind]` (`ls`) | safe | `name · kind · public fields`, `[disabled]`, `[incomplete: …]` |
+| `account list [kind]` (`ls`) | safe | A table: account, kind, State (`disabled`, `incomplete: …`, in warn), public fields |
 | `account show <name>` | safe | Public fields, `set (hidden)` / `not set` / `set (cannot be decrypted)` for each secret, the SSH key fingerprint or `none`, `Missing: …` |
 | `account fields <name>` | safe | Every field of the kind as `✓`/`✗`, no values; then `Complete` or `Missing: …` |
 | `account add <name> [--kind <kind>] [--<field> <value>]… [--no-ssh]` | confirm | Creates an account (a `github` one gets an ed25519 key unless `--no-ssh`; the public key is printed with a link). Secret fields and `claude-login` are refused |
@@ -34,10 +34,10 @@ Checks and `managed` exist only on built-in kinds; the kinds file cannot set the
 | `account use <name> [dir]`, `unuse [dir]`, `which [dir]` | confirm / confirm / safe | Make git in a repository push, pull and commit as the account (`core.sshCommand` through `bin/ssh-as`, `user.name`, `user.email`, `yena.account`), undo it, or show it |
 | `account disable|enable <name>` | confirm | A disabled account gives no secrets to modules and fails in every repository that uses it |
 | `account remove <name>` (`rm`) | confirm | Deletes the account with its secrets and key |
-| `account grants` | safe | `module · kind · declared … · granted …|not granted` for every installed module that declares credentials |
+| `account grants` | safe | A table with a row per kind that every installed module declaring credentials declares: module, kind, `declared …`, then `granted …` or `not granted` (in warn) |
 | `account grant <module> [kind]…` | deny | Gives the module the access its `yena.json` declares, for the given kinds (none: all declared); refuses modules that are not installed and kinds they did not declare |
 | `account revoke <module> [kind]…` | deny | Takes the grants away (none: all of them) |
-| `account vault status` | safe | Whether the key is there, its id, how many entries are encrypted, still plaintext, or cannot be decrypted |
+| `account vault status` | safe | A key/value table: `Vault key` (present with its id, not made yet, or missing or unusable), `Encrypted`, and `Not encrypted yet` / `Cannot be decrypted` when any |
 | `account vault rotate` | deny | A new key; everything re-encrypted and verified; the old key dropped only when all succeeded (run again to resume) |
 | `account vault reset` | deny | After you type `reset`: drops the secrets and SSH keys that cannot be decrypted and makes a new key when none is usable. Needs the app |
 

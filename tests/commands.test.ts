@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFile, rm} from 'node:fs/promises';
+import {readFile, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {test} from 'node:test';
-import type {BuildInfo, Command, CommandContext, CredentialProvider, Logger, MountControl, MountOptions, PluginHost, SettingsTab} from '../../../src/api.js';
+import type {BuildInfo, Command, CommandContext, CredentialProvider, Logger, MountControl, MountOptions, PluginHost, SettingsTab, StyledBlock} from '../../../src/api.js';
 import {createGrants} from '../src/grants.js';
 import {createPlugin, redactPrivateKeys, redactValues} from '../src/index.js';
 import {BUILTIN_KINDS} from '../src/kinds.js';
@@ -20,7 +20,19 @@ const load = async (dataDir: string, extra: Partial<PluginHost> = {}): Promise<C
 const run = async (command: Command, line: string, extra: Partial<CommandContext> = {}) => {
 	const {out, ctx} = makeCtx();
 	await command.run(line.split(' ').filter(Boolean), {...ctx, ...extra});
-	return out;
+	return out.flatMap(t => t.split('\n'));
+};
+const runStyled = async (command: Command, line: string, extra: Partial<CommandContext> = {}) => {
+	const blocks: StyledBlock[] = [];
+	const {ctx} = makeCtx();
+	await command.run(line.split(' ').filter(Boolean), {...ctx, printStyled: b => void blocks.push(...b), ...extra});
+	return blocks;
+};
+const tableRows = (blocks: StyledBlock[]) => {
+	assert.equal(blocks.length, 1);
+	const b = blocks[0]!;
+	assert.equal(b.kind, 'table');
+	return b.kind === 'table' ? b : assert.fail();
 };
 
 type InputProps = {label: string; onSubmit: (v: string) => void; onCancel: () => void};
@@ -71,7 +83,7 @@ test('a github account by default: add prints the public key and nothing like a 
 	assert.match(added[0]!, /Account "yena" \(github\) created/);
 	assert.match(added.join('\n'), /^ {2}ssh-ed25519 \S+ yena@example\.com$/m);
 	assert.match(added.join('\n'), /Secrets \(token\): account secret yena <field>/);
-	assert.deepEqual(await run(command, 'list'), ['  yena · github · login=yena-bot email=yena@example.com']);
+	assert.deepEqual(await run(command, 'list'), ['yena  github  login=yena-bot email=yena@example.com']);
 });
 
 test('a kind of your own: fields on the command line, secrets only through the hidden input', async () => {
@@ -88,7 +100,7 @@ test('a kind of your own: fields on the command line, secrets only through the h
 	await assert.rejects(run(command, 'add pay --kind stripe --no-ssh'), /has no SSH key anyway/);
 	const added = await run(command, 'add pay --kind stripe --accountId acct_1');
 	assert.deepEqual(added, ['✓ Account "pay" (stripe) created', '  Secrets (token): account secret pay <field>', '  Still needed: token']);
-	assert.deepEqual(await run(command, 'list'), ['  pay · stripe [incomplete: token] · accountId=acct_1']);
+	assert.deepEqual(await run(command, 'list'), ['pay  stripe  incomplete: token  accountId=acct_1']);
 	const {mount, seen} = typing('sk_test_secret_value');
 	const out = await run(command, 'secret pay token', {mount});
 	assert.deepEqual(out, ['✓ pay: token saved']);
@@ -97,7 +109,7 @@ test('a kind of your own: fields on the command line, secrets only through the h
 	const shown = await run(command, 'show pay');
 	assert.deepEqual(shown, ['pay · stripe', '  accountId!: acct_1', '  token!: set (hidden)']);
 	assert.ok(!shown.join('\n').includes('sk_test'));
-	assert.deepEqual(await run(command, 'list'), ['  pay · stripe · accountId=acct_1']);
+	assert.deepEqual(await run(command, 'list'), ['pay  stripe  accountId=acct_1']);
 	assert.deepEqual(await run(command, 'secret pay token --clear'), ['✓ pay: token cleared']);
 	assert.deepEqual((await run(command, 'show pay')).slice(2), ['  token!: not set', '  Missing: token']);
 	await assert.rejects(run(command, 'kind remove stripe'), /Accounts of kind "stripe" exist/);
@@ -110,12 +122,12 @@ test('a github account without SSH needs its token; with a key it is complete', 
 	const added = await run(command, 'add api --no-ssh --login yena-bot');
 	assert.ok(!added.join('\n').includes('ssh-ed25519'), 'no key was made');
 	assert.equal(added.at(-1), '  Still needed: ssh|token');
-	assert.deepEqual(await run(command, 'list'), ['  api · github [incomplete: ssh|token] · login=yena-bot']);
+	assert.deepEqual(await run(command, 'list'), ['api  github  incomplete: ssh|token  login=yena-bot']);
 	assert.equal((await run(command, 'show api')).find(l => l.startsWith('  SSH key')), '  SSH key: none');
 	await run(command, 'secret api token', {mount: typing('ghp_token_value').mount});
-	assert.deepEqual(await run(command, 'list'), ['  api · github · login=yena-bot']);
+	assert.deepEqual(await run(command, 'list'), ['api  github  login=yena-bot']);
 	await run(command, 'add pusher');
-	assert.match((await run(command, 'list'))[1]!, /^ {2}pusher · github$/);
+	assert.match((await run(command, 'list'))[1]!, /^pusher {2}github$/);
 });
 
 test('fields: every field of the kind, filled in or empty, never a value', async () => {
@@ -165,7 +177,7 @@ test('use and which work on a repository; a disabled account cannot be used', as
 	assert.deepEqual(await run(command, `which ${repo}`), [`${repo}: yena`]);
 	await run(command, 'disable yena');
 	await assert.rejects(run(command, `use yena ${repo}`), /is disabled/);
-	assert.match((await run(command, 'list'))[0]!, /\[disabled\]/);
+	assert.match((await run(command, 'list'))[0]!, /  disabled$/);
 });
 
 test('use and key need an account with an SSH key', async () => {
@@ -292,7 +304,7 @@ test('account secret refuses the managed login field', async () => {
 test('grants: listed per declaring module; grant and revoke change them; assistants are refused', async () => {
 	const c = capture();
 	const command = await load(await tmp(), c.host);
-	assert.deepEqual(await run(command, 'grants'), ['  claude · anthropic-key · declared write · not granted', '  claude · anthropic-token · declared read · not granted']);
+	assert.deepEqual(await run(command, 'grants'), ['claude  anthropic-key  declared write  not granted', 'claude  anthropic-token  declared read  not granted']);
 	const signal = new AbortController().signal;
 	await assert.rejects(run(command, 'grant claude', {signal}), /only for you to run in the console, never for an assistant/);
 	await assert.rejects(run(command, 'revoke claude', {signal}), /never for an assistant/);
@@ -302,7 +314,7 @@ test('grants: listed per declaring module; grant and revoke change them; assista
 	await assert.rejects(run(command, 'grant'), /Specify the module/);
 	assert.deepEqual(await run(command, 'grant claude anthropic-token'), ['✓ claude may now use: anthropic-token (read)']);
 	assert.deepEqual(await run(command, 'grant claude'), ['✓ claude may now use: anthropic-key (write), anthropic-token (read)']);
-	assert.deepEqual(await run(command, 'grants'), ['  claude · anthropic-key · declared write · granted write', '  claude · anthropic-token · declared read · granted read']);
+	assert.deepEqual(await run(command, 'grants'), ['claude  anthropic-key  declared write  granted write', 'claude  anthropic-token  declared read  granted read']);
 	const me = {module: 'claude', declared: build.modules[1]!.credentials!};
 	assert.deepEqual((await c.provider().list(undefined, me)).length, 0);
 	assert.deepEqual(await run(command, 'revoke claude anthropic-key'), ['✓ claude: anthropic-key revoked']);
@@ -328,22 +340,22 @@ test('vault: status shows counts only; rotate and reset refuse assistants; reset
 	await run(command, 'add k1 --kind anthropic-key');
 	await run(command, 'secret k1 key', {mount: typing(FAKE_KEY).mount});
 	await run(command, 'add gh');
-	assert.deepEqual(await run(command, 'vault status'), ['Vault key: present (key 1)', '  Encrypted: 2']);
+	assert.deepEqual(await run(command, 'vault status'), ['Vault key:  present (key 1)', 'Encrypted:  2']);
 	const signal = new AbortController().signal;
 	await assert.rejects(run(command, 'vault rotate', {signal}), /never for an assistant/);
 	await assert.rejects(run(command, 'vault reset', {signal}), /never for an assistant/);
 	assert.deepEqual(await run(command, 'vault rotate'), ['✓ Vault key 2: 1 secret file and 1 SSH key re-encrypted, the old key dropped']);
-	assert.deepEqual(await run(command, 'vault status'), ['Vault key: present (key 2)', '  Encrypted: 2']);
+	assert.deepEqual(await run(command, 'vault status'), ['Vault key:  present (key 2)', 'Encrypted:  2']);
 	await assert.rejects(run(command, 'vault reset'), /needs the app/);
 	assert.deepEqual(await run(command, 'vault reset', {mount: typing(null).mount}), ['Cancelled, nothing changed']);
 	await rm(path.join(dir, 'vault', 'key'));
 	const status = await run(command, 'vault status');
-	assert.deepEqual(status, ['Vault key: not made yet', '  Encrypted: 0', '  Cannot be decrypted: 2 (restore the vault folder from a backup, or: account vault reset)']);
+	assert.deepEqual(status, ['Vault key:  not made yet', 'Encrypted:  0', 'Cannot be decrypted:  2 (restore the vault folder from a backup, or: account vault reset)']);
 	assert.match((await run(command, 'show k1'))[1]!, /key!: set \(cannot be decrypted\)/);
 	const {mount, seen} = typing('reset');
 	assert.deepEqual(await run(command, 'vault reset', {mount}), ['✓ Vault reset: 1 secret and 1 SSH key dropped, a new key made']);
 	assert.match(seen.label!, /Drop 2 entries that cannot be decrypted/);
-	assert.deepEqual(await run(command, 'vault status'), ['Vault key: present (key 1)', '  Encrypted: 0']);
+	assert.deepEqual(await run(command, 'vault status'), ['Vault key:  present (key 1)', 'Encrypted:  0']);
 	let shown: string[] | undefined;
 	await run(command, 'vault', {showHelp: p => void (shown = p)});
 	assert.deepEqual(shown, ['vault']);
@@ -363,4 +375,49 @@ test('the log redactor masks a token inside a stored login blob and the vault ke
 	const key = (JSON.parse(await readFile(path.join(dir, 'vault', 'key'), 'utf8')) as {keys: {key: string}[]}).keys[0]!.key;
 	assert.equal(c.redact(`k=${key}`), 'k=[vault key]');
 	assert.ok(!JSON.stringify(c.records).includes(ACCESS));
+});
+
+test('styled output: list is a table with a head and warn states; grants and vault are head-less tables with tones', async () => {
+	const dir = await tmp();
+	const command = await load(dir, capture().host);
+	await run(command, 'kind add stripe accountId! token:secret!');
+	await run(command, 'add pay --kind stripe --accountId acct_1');
+	await run(command, 'disable pay');
+	const list = tableRows(await runStyled(command, 'list'));
+	assert.deepEqual(list.head, ['Account', 'Kind', 'State', 'Fields']);
+	assert.equal(list.flex, 3);
+	assert.deepEqual(list.rows, [
+		[{text: 'pay', bold: true}, 'stripe', [{text: 'disabled', tone: 'warn'}, ', ', {text: 'incomplete: token', tone: 'warn'}], {text: 'accountId=acct_1', tone: 'muted'}],
+	]);
+
+	const grants = tableRows(await runStyled(command, 'grants'));
+	assert.equal(grants.head, undefined);
+	assert.deepEqual(grants.rows[0], [{text: 'claude', bold: true}, 'anthropic-key', {text: 'declared write', tone: 'muted'}, {text: 'not granted', tone: 'warn'}]);
+	await run(command, 'grant claude anthropic-key');
+	assert.deepEqual(tableRows(await runStyled(command, 'grants')).rows[0]![3], {text: 'granted write', tone: 'ok'});
+
+	await run(command, 'secret pay token', {mount: typing('sk_test_value').mount});
+	const vault = tableRows(await runStyled(command, 'vault status'));
+	assert.equal(vault.head, undefined);
+	assert.deepEqual(vault.rows, [
+		[{text: 'Vault key:', bold: true}, {text: 'present (key 1)', tone: 'ok'}],
+		[{text: 'Encrypted:', bold: true}, '1'],
+	]);
+	assert.ok(!JSON.stringify(vault).includes('sk_test'));
+	await rm(path.join(dir, 'vault', 'key'));
+	const broken = tableRows(await runStyled(command, 'vault status'));
+	assert.deepEqual(broken.rows[0]![1], {text: 'not made yet', tone: 'muted'});
+	assert.deepEqual(broken.rows[2], [{text: 'Cannot be decrypted:', bold: true}, {text: '1 (restore the vault folder from a backup, or: account vault reset)', tone: 'error'}]);
+});
+
+test('vault status adds a warn row for plaintext secrets only when there are any', async () => {
+	const dir = await tmp();
+	const command = await load(dir);
+	await run(command, 'add k1 --kind anthropic-key');
+	await run(command, 'secret k1 key', {mount: typing(FAKE_KEY).mount});
+	const clean = tableRows(await runStyled(command, 'vault status'));
+	assert.ok(!JSON.stringify(clean.rows).includes('Not encrypted yet'));
+	await writeFile(path.join(dir, 'secrets', 'k1.json'), JSON.stringify({key: FAKE_KEY}), {mode: 0o600});
+	const dirty = tableRows(await runStyled(command, 'vault status'));
+	assert.deepEqual(dirty.rows[2], [{text: 'Not encrypted yet:', bold: true}, {text: '1 (encrypted at the next start of yena)', tone: 'warn'}]);
 });

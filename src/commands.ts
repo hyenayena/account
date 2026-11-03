@@ -1,9 +1,10 @@
-import type {BuildInfo, Command, CommandContext, CredentialAccess, Logger, MountControl, Setting, SettingsTab, Subcommand, UiElement} from '../../../src/api.js';
+import type {BuildInfo, Command, CommandContext, CredentialAccess, Logger, MountControl, Setting, SettingsTab, StyledCell, Subcommand, UiElement} from '../../../src/api.js';
 import {accountOf, runGit, unuseAccount, useAccount, type Git} from './git.js';
 import {createGrants, type Grants} from './grants.js';
 import {DEFAULT_KIND, fieldStatus, isManagedKind, missingOf, SSH_KEY, type Kind, type Kinds} from './kinds.js';
 import {inventory, reset, rotate} from './migrate.js';
 import {checkName, type Account, type Store} from './store.js';
+import {printStyled, span, table} from './kit.js';
 
 export type Deps = {
 	dataDir: string;
@@ -189,8 +190,10 @@ const fieldText = (a: Account) =>
 		.map(([k, v]) => `${k}=${v}`)
 		.join(' ');
 
-const line = (a: Account, missing: string[]) =>
-	`  ${a.name} · ${a.kind}${a.disabled ? ' [disabled]' : ''}${missing.length ? ` [incomplete: ${missing.join(', ')}]` : ''}${Object.keys(a.fields).length ? ` · ${fieldText(a)}` : ''}`;
+function stateCell(a: Account, missing: string[]): StyledCell {
+	const parts = [...(a.disabled ? ['disabled'] : []), ...(missing.length > 0 ? [`incomplete: ${missing.join(', ')}`] : [])];
+	return parts.flatMap((p, i) => [...(i > 0 ? [', '] : []), span(p, {tone: 'warn'})]);
+}
 
 const kindLine = (k: Kind) => {
 	const fields = k.fields.map(f => `${f.key}${f.required ? '!' : ''}${f.secret ? ' (secret)' : ''}`);
@@ -263,14 +266,21 @@ export function createCommand(deps: Deps): Command {
 		if (!deps.build) return ctx.print('This yena does not tell which modules declare credentials (an older host)');
 		const modules = declarers();
 		if (modules.length === 0) return ctx.print('No installed module declares credentials');
-		const table = await grants.all();
+		const given = await grants.all();
+		const rows: StyledCell[][] = [];
 		for (const m of modules) {
 			for (const [kind, declared] of Object.entries(m.credentials ?? {})) {
-				const granted = table[m.name]?.[kind];
+				const granted = given[m.name]?.[kind];
 				const effective: CredentialAccess | undefined = granted === undefined ? undefined : declared === 'read' ? 'read' : granted;
-				ctx.print(`  ${m.name} · ${kind} · declared ${declared} · ${effective ? `granted ${effective}` : 'not granted'}`);
+				rows.push([
+					span(m.name, {bold: true}),
+					kind,
+					span(`declared ${declared}`, {tone: 'muted'}),
+					effective ? span(`granted ${effective}`, {tone: 'ok'}) : span('not granted', {tone: 'warn'}),
+				]);
 			}
 		}
+		printStyled(ctx, [table(rows)]);
 	}
 
 	async function changeGrants(sub: 'grant' | 'revoke', args: string[], ctx: CommandContext): Promise<void> {
@@ -305,11 +315,24 @@ export function createCommand(deps: Deps): Command {
 			case 'status': {
 				const st = await store.vault.status();
 				const counts = await inventory(store);
-				ctx.print(`Vault key: ${st.state === 'ok' ? `present (key ${st.current}${st.kids.length > 1 ? ', a rotation is unfinished' : ''})` : st.state === 'none' ? 'not made yet' : 'missing or unusable'}`);
-				ctx.print(`  Encrypted: ${counts.encrypted}`);
-				if (counts.plaintext > 0) ctx.print(`  ${counts.plaintext} secret${counts.plaintext === 1 ? ' is' : 's are'} not encrypted yet (encrypted at the next start of yena)`);
-				if (counts.undecryptable > 0) ctx.print(`  Cannot be decrypted: ${counts.undecryptable} (restore the vault folder from a backup, or: account vault reset)`);
-				return;
+				const key =
+					st.state === 'ok'
+						? st.kids.length > 1
+							? span(`present (key ${st.current}, a rotation is unfinished)`, {tone: 'warn'})
+							: span(`present (key ${st.current})`, {tone: 'ok'})
+						: st.state === 'none'
+							? span('not made yet', {tone: 'muted'})
+							: span('missing or unusable', {tone: 'warn'});
+				const label = (text: string) => span(text, {bold: true});
+				const rows: StyledCell[][] = [
+					[label('Vault key:'), key],
+					[label('Encrypted:'), String(counts.encrypted)],
+					...(counts.plaintext > 0 ? [[label('Not encrypted yet:'), span(`${counts.plaintext} (encrypted at the next start of yena)`, {tone: 'warn'})]] : []),
+					...(counts.undecryptable > 0
+						? [[label('Cannot be decrypted:'), span(`${counts.undecryptable} (restore the vault folder from a backup, or: account vault reset)`, {tone: 'error'})]]
+						: []),
+				];
+				return printStyled(ctx, [table(rows)]);
 			}
 			case 'rotate': {
 				if (ctx.signal) throw new Error('"account vault rotate" is only for you to run in the console, never for an assistant');
@@ -361,8 +384,12 @@ export function createCommand(deps: Deps): Command {
 				case 'ls': {
 					const accounts = (await store.list()).filter(a => args[0] === undefined || a.kind === args[0]);
 					if (accounts.length === 0) return ctx.print(args[0] ? `No ${clip(args[0])} accounts` : 'No accounts. Add one: account new (step by step) or settings → Accounts');
-					for (const a of accounts) ctx.print(line(a, await missingFor(a)));
-					return;
+					const rows: StyledCell[][] = [];
+					for (const a of accounts) {
+						const fields = fieldText(a);
+						rows.push([span(a.name, {bold: true}), a.kind, stateCell(a, await missingFor(a)), fields === '' ? '' : span(fields, {tone: 'muted'})]);
+					}
+					return printStyled(ctx, [table(rows, {head: ['Account', 'Kind', 'State', 'Fields'], flex: 3})]);
 				}
 				case 'show': {
 					const a = await store.get(checkName(args[0]));
