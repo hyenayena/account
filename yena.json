@@ -1,6 +1,6 @@
 {
 	"name": "account",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"description": "Accounts for services (GitHub built in, your own kinds of credentials) that the assistant and other modules use without seeing their secrets",
 	"runtime": "node",
 	"entry": "src/index.ts",

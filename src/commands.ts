@@ -1,7 +1,7 @@
 import type {BuildInfo, Command, CommandContext, CredentialAccess, Logger, MountControl, Setting, SettingsTab, StyledCell, Subcommand, UiElement} from '../../../src/api.js';
 import {accountOf, runGit, unuseAccount, useAccount, type Git} from './git.js';
 import {createGrants, type Grants} from './grants.js';
-import {DEFAULT_KIND, fieldStatus, isManagedKind, missingOf, SSH_KEY, type Kind, type Kinds} from './kinds.js';
+import {DEFAULT_KIND, fieldStatus, missingOf, SSH_KEY, type Kind, type Kinds} from './kinds.js';
 import {inventory, reset, rotate} from './migrate.js';
 import {checkName, type Account, type Store} from './store.js';
 import {printStyled, span, table} from './kit.js';
@@ -164,8 +164,6 @@ const subcommands: Subcommand[] = [
 const USAGE = 'account <subcommand>';
 
 const clip = (s: string) => s.slice(0, 40);
-
-const MADE_BY: Record<string, string> = {'claude-login': 'claude auth login'};
 
 function parseFlags(words: string[], allowKind: boolean): {kind?: string; fields: Record<string, string>} {
 	const fields: Record<string, string> = {};
@@ -430,7 +428,6 @@ export function createCommand(deps: Deps): Command {
 						true,
 					);
 					const kind = await kinds.get(flags.kind ?? DEFAULT_KIND);
-					if (isManagedKind(kind)) throw new Error(`Accounts of kind ${kind.name} are made by: ${MADE_BY[kind.name] ?? 'the module that uses them'}`);
 					if (noSsh && !kind.ssh) throw new Error(`--no-ssh: kind "${kind.name}" has no SSH key anyway`);
 					const account = await store.add({name: checkName(name), kind, fields: flags.fields, ...(noSsh && {ssh: false})});
 					log.info('account added', {kind: kind.builtin ? kind.name : 'custom', fields: Object.keys(flags.fields).length, ssh: account.publicKey !== undefined});
@@ -464,7 +461,6 @@ export function createCommand(deps: Deps): Command {
 					const def = kind.fields.find(f => f.key === field);
 					if (!field) throw new Error(`Specify the field: ${kind.fields.filter(f => f.secret).map(f => f.key).join(', ') || 'this kind has no secret fields'}`);
 					if (!def?.secret) throw new Error(`"${clip(field)}" is not a secret field of ${kind.name} (secret fields: ${kind.fields.filter(f => f.secret).map(f => f.key).join(', ') || 'none'})`);
-					if (def.managed) throw new Error(`"${field}" is set by the module that uses it (${MADE_BY[kind.name] ?? 'not by hand'}); it cannot be typed`);
 					if (flag !== undefined && flag !== '--clear') throw new Error(`Unknown option "${clip(flag)}"`);
 					if (flag === '--clear') {
 						await store.setSecret(account.name, field, undefined);

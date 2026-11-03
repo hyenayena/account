@@ -117,6 +117,19 @@ export function createGrants(dataDir: string, log: Logger = noopLog) {
 			await save(table);
 			return removed;
 		},
+		async dropKinds(kinds: readonly string[]): Promise<void> {
+			const table = copy(await load());
+			let changed = false;
+			for (const own of Object.values(table)) {
+				for (const k of kinds) {
+					if (k in own) {
+						delete own[k];
+						changed = true;
+					}
+				}
+			}
+			if (changed) await save(table);
+		},
 		async prune(installed: string[]): Promise<string[]> {
 			const table = copy(await load());
 			const gone = Object.keys(table).filter(m => !installed.includes(m));

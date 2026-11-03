@@ -8,6 +8,7 @@ import {createKinds} from './kinds.js';
 import {noopLog} from './log.js';
 import {inventory, migrate} from './migrate.js';
 import {createProvider} from './provider.js';
+import {retireKinds} from './retire.js';
 import {createStore, type Store} from './store.js';
 
 const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
@@ -46,6 +47,8 @@ export function createPlugin(opts: {agents?: boolean} = {}): ModulePlugin {
 		let redactSecrets = redactValues([]);
 		log.addRedactor(text => redactSecrets(redactPrivateKeys(raw.vault.redact(text))));
 		await migrate(raw, log);
+		const grants = createGrants(host.dataDir, log);
+		await retireKinds({store: raw, grants, dataDir: host.dataDir, log});
 		const left = await inventory(raw).catch(() => undefined);
 		if (left && left.plaintext > 0) log.warn('vault has unencrypted entries', {count: left.plaintext});
 		const store =
@@ -59,7 +62,6 @@ export function createPlugin(opts: {agents?: boolean} = {}): ModulePlugin {
 			);
 		refresh();
 		const kinds = createKinds(host.dataDir);
-		const grants = createGrants(host.dataDir, log);
 		if (host.build) {
 			await grants.prune(host.build.modules.map(m => m.name)).catch(error => log.warn('grants not pruned', {err: error}));
 		}

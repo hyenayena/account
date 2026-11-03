@@ -32,7 +32,6 @@ const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const EMAIL = /^[^\s'"<>@]{1,64}@[^\s'"<>@]{1,190}$/;
 const MAX_VALUE = 1024;
 const CONTROL = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f]');
-const LOGIN_METHODS = ['claude.ai', 'console'];
 
 export function checkName(name: string | undefined): string {
 	if (!name) throw new Error('Specify the account name');
@@ -47,7 +46,6 @@ export function checkFields(kind: Kind, fields: Record<string, string>): Record<
 		if (field.secret) throw new Error(`"${key}" is secret and is never typed in a command line. Enter it with: account secret <name> ${key}`);
 		if (value === '' || value.length > MAX_VALUE || CONTROL.test(value)) throw new Error(`Invalid value for "${key}"`);
 		if (kind.name === 'github' && key === 'login' && !LOGIN.test(value)) throw new Error('Invalid login: letters, digits and "-", at most 39 characters');
-		if (kind.name === 'claude-login' && key === 'method' && !LOGIN_METHODS.includes(value)) throw new Error(`Invalid method: ${LOGIN_METHODS.join(' or ')}`);
 		if (key === 'email' && !EMAIL.test(value)) throw new Error('Invalid email');
 	}
 	return fields;

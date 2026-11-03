@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {BUILTIN_KINDS} from '../src/kinds.js';
-import {checkSecret, MAX_LOGIN, maxSecretOf, secretLeaves} from '../src/validate.js';
+import {checkSecret, secretLeaves} from '../src/validate.js';
 import {stripe} from './helpers.js';
 
 const kind = (name: string) => BUILTIN_KINDS.find(k => k.name === name)!;
@@ -25,26 +25,6 @@ test('anthropic-key: sk-ant- but not a subscription token', () => {
 	refused('anthropic-key', 'key', 'sk-ant-short', /Not an Anthropic API key/);
 	refused('anthropic-key', 'key', 'ghp_' + 'x'.repeat(36), /Not an Anthropic API key/);
 	refused('anthropic-key', 'key', `${fakeKey} extra`, /Not an Anthropic API key/);
-});
-
-test('anthropic-token: sk-ant-oat only', () => {
-	checkSecret(kind('anthropic-token'), 'token', fakeToken);
-	refused('anthropic-token', 'token', fakeKey, /^Not an Anthropic subscription token \(sk-ant-oat…\)$/);
-	refused('anthropic-token', 'token', 'sk-ant-oat01-x', /Not an Anthropic subscription token/);
-});
-
-test('claude-login: a JSON object with an OAuth login or a Console key, at most 64 KiB', () => {
-	const oauth = JSON.stringify({credentials: {claudeAiOauth: {accessToken: 'a'.repeat(30)}}});
-	const consoleKey = JSON.stringify({primaryApiKey: fakeKey});
-	checkSecret(kind('claude-login'), 'login', oauth);
-	checkSecret(kind('claude-login'), 'login', consoleKey);
-	for (const bad of ['', 'not json', '[]', '"x"', '{}', JSON.stringify({credentials: {claudeAiOauth: 'x'}}), JSON.stringify({primaryApiKey: ''})]) {
-		refused('claude-login', 'login', bad, /^Not a Claude Code login/);
-	}
-	const big = JSON.stringify({primaryApiKey: fakeKey, pad: 'p'.repeat(MAX_LOGIN)});
-	refused('claude-login', 'login', big, /at most 64 KiB/);
-	assert.equal(maxSecretOf(kind('claude-login'), 'login'), MAX_LOGIN);
-	assert.equal(maxSecretOf(kind('anthropic-key'), 'key'), 8192);
 });
 
 test('other fields: 1 to 8192 characters', () => {

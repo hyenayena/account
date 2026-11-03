@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {GRANTS_FILE} from './grants.js';
 import {createKinds, KINDS_FILE, missingOf, type Field} from './kinds.js';
+import {readRetired} from './retire.js';
 import {ACCOUNTS_FILE, createStore, DISABLED_DIR, KEYS_DIR, SECRETS_DIR} from './store.js';
 import {VAULT_DIR} from './vault.js';
 
@@ -30,6 +31,10 @@ export const deniedPathsFor = (moduleDataDir: string): string[] => {
 	const dir = accountDataDirFor(moduleDataDir);
 	return [ACCOUNTS_FILE, KINDS_FILE, SECRETS_DIR, KEYS_DIR, DISABLED_DIR, VAULT_DIR, GRANTS_FILE].map(p => path.join(dir, p));
 };
+
+export type RetiredCredentials = {at: string; logins: number; tokens: number};
+
+export const retiredCredentialsFor = (moduleDataDir: string): RetiredCredentials | undefined => readRetired(accountDataDirFor(moduleDataDir));
 
 export const secretDirsFor = deniedPathsFor;
 

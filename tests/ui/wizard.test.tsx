@@ -64,7 +64,7 @@ test('github step by step: name, login, skipped email, an SSH key, a skipped tok
 
 test('a kind of your own: a required field, then a secret that never reaches the screen', async () => {
 	const {store, ui} = await setup(true);
-	for (let i = 0; i < 3; i++) await ui.press(DOWN);
+	for (let i = 0; i < 2; i++) await ui.press(DOWN);
 	await ui.press('\r');
 	await ui.press('pay');
 	await ui.press('\r');
@@ -93,7 +93,7 @@ test('Esc before anything is saved cancels; Esc at a secret keeps the account an
 	first.ui.unmount();
 
 	const second = await setup(true);
-	for (let i = 0; i < 3; i++) await second.ui.press(DOWN);
+	for (let i = 0; i < 2; i++) await second.ui.press(DOWN);
 	await second.ui.press('\r');
 	await second.ui.press('pay');
 	await second.ui.press('\r');
@@ -106,11 +106,11 @@ test('Esc before anything is saved cancels; Esc at a secret keeps the account an
 	second.ui.unmount();
 });
 
-test('the kind picker leaves out claude-login; an invalid Anthropic key shows the error and stays on the step', async () => {
+test('the kind picker lists only the live kinds; an invalid Anthropic key shows the error and stays on the step', async () => {
 	const {store, ui} = await setup();
 	assert.match(ui.last(), /anthropic-key \(built in\)/);
-	assert.match(ui.last(), /anthropic-token \(built in\)/);
-	assert.doesNotMatch(ui.all(), /claude-login/);
+	assert.match(ui.last(), /github \(built in\)/);
+	assert.doesNotMatch(ui.all(), /anthropic-token|claude-login/);
 	await ui.press(DOWN);
 	await ui.press('\r');
 	await ui.press('k1');

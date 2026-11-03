@@ -11,8 +11,7 @@ import {tmp} from './helpers.js';
 
 const kind = (name: string) => BUILTIN_KINDS.find(k => k.name === name)!;
 const KEY = 'sk-ant-api03-' + 'Gen3rated_'.repeat(4);
-const TOKEN = 'sk-ant-oat01-' + 'Gen3rated_'.repeat(4);
-const LOGIN = JSON.stringify({credentials: {claudeAiOauth: {accessToken: 'sk-ant-oat01-' + 'Acc3ss_'.repeat(6), refreshToken: 'sk-ant-ort01-' + 'Refr3sh_'.repeat(6)}}});
+const KEY2 = 'sk-ant-api03-' + 'Secondary_'.repeat(4);
 
 const caller = (declared: Record<string, CredentialAccess>, module = 'claude'): CredentialCaller => ({module, declared: Object.freeze({...declared})});
 
@@ -43,8 +42,8 @@ async function setup() {
 	const raw = createStore(dir);
 	await raw.add({name: 'key1', kind: kind('anthropic-key')});
 	await raw.setSecret('key1', 'key', KEY);
-	await raw.add({name: 'tok1', kind: kind('anthropic-token')});
-	await raw.setSecret('tok1', 'token', TOKEN);
+	await raw.add({name: 'key2', kind: kind('anthropic-key')});
+	await raw.setSecret('key2', 'key', KEY2);
 	await raw.add({name: 'gh', kind: kind('github'), ssh: false});
 	await raw.setSecret('gh', 'token', 'ghp_' + 'g'.repeat(36));
 	const {store, calls} = counting(raw);
@@ -55,7 +54,7 @@ async function setup() {
 	return {dir, raw, calls, provider, grants, records, refreshed: () => refreshed};
 }
 
-const all = {'anthropic-key': 'write', 'anthropic-token': 'write', 'claude-login': 'write'} as const;
+const all = {'anthropic-key': 'write', github: 'write'} as const;
 
 test('an ungranted module gets nothing: every call is refused with CREDENTIAL_ACCESS and the store is never touched', async () => {
 	const {provider, calls, records} = await setup();
@@ -70,8 +69,7 @@ test('an ungranted module gets nothing: every call is refused with CREDENTIAL_AC
 	assert.deepEqual(calls, []);
 	assert.deepEqual(await provider.grants(me), [
 		{kind: 'anthropic-key', declared: 'write'},
-		{kind: 'anthropic-token', declared: 'write'},
-		{kind: 'claude-login', declared: 'write'},
+		{kind: 'github', declared: 'write'},
 	]);
 	assert.deepEqual(records.filter(r => r.msg === 'credential access').map(r => r.fields!.outcome), ['denied', 'denied', 'denied', 'denied', 'denied', 'denied', 'ok']);
 });
@@ -82,7 +80,7 @@ test('an undeclared kind is refused even when the grants file has it', async () 
 	const me = caller({'anthropic-key': 'write'});
 	await assert.rejects(provider.list('github', me), {message: 'claude did not declare credentials of kind "github" in yena.json'});
 	await assert.rejects(provider.read('gh', 'token', me), {message: 'claude did not declare credentials of kind "github" in yena.json'});
-	assert.deepEqual((await provider.list(undefined, me)).map(a => a.name), ['key1'], 'list shows only granted, declared kinds');
+	assert.deepEqual((await provider.list(undefined, me)).map(a => a.name), ['key1', 'key2'], 'list shows only granted, declared kinds');
 	await assert.rejects(provider.list(undefined, caller({})), {message: 'claude did not declare any credentials in yena.json'});
 });
 
@@ -90,25 +88,24 @@ test('granted: list, read, write, create and remove; read of a disabled account 
 	const {provider, grants, raw, refreshed} = await setup();
 	await grants.allow('claude', {...all});
 	const me = caller(all);
-	assert.deepEqual(await provider.list('anthropic-key', me), [{name: 'key1', kind: 'anthropic-key', fields: {}, secrets: ['key'], disabled: false, missing: []}]);
-	assert.deepEqual((await provider.list(undefined, me)).map(a => a.name), ['key1', 'tok1']);
+	assert.deepEqual((await provider.list('anthropic-key', me)).map(a => a.name), ['key1', 'key2']);
+	assert.deepEqual((await provider.list(undefined, me)).map(a => a.name), ['key1', 'key2', 'gh']);
 	assert.ok(!JSON.stringify(await provider.list(undefined, me)).includes('sk-ant'), 'list carries no values');
 	assert.equal(await provider.read('key1', 'key', me), KEY);
-	assert.equal(await provider.read('tok1', 'token', me), TOKEN);
-	const made = await provider.create({name: 'login1', kind: 'claude-login', fields: {email: 'me@example.com', method: 'claude.ai'}}, me);
-	assert.deepEqual(made, {name: 'login1', kind: 'claude-login', fields: {email: 'me@example.com', method: 'claude.ai'}, secrets: [], disabled: false, missing: ['login']});
-	await provider.write('login1', 'login', LOGIN, me);
+	assert.equal(await provider.read('key2', 'key', me), KEY2);
+	const made = await provider.create({name: 'key3', kind: 'anthropic-key'}, me);
+	assert.deepEqual(made, {name: 'key3', kind: 'anthropic-key', fields: {}, secrets: [], disabled: false, missing: ['key']});
+	await provider.write('key3', 'key', KEY2, me);
 	assert.equal(refreshed(), 1, 'a write refreshes the redactor');
-	assert.equal(await provider.read('login1', 'login', me), LOGIN);
-	assert.equal(await provider.read('login1', 'email', me).catch((e: Error) => e.message), 'Kind "claude-login" has no secret field "email"');
+	assert.equal(await provider.read('key3', 'key', me), KEY2);
+	assert.equal(await provider.read('gh', 'login', me).catch((e: Error) => e.message), 'Kind "github" has no secret field "login"');
 	await assert.rejects(provider.write('key1', 'key', 'not-a-key', me), {message: 'Not an Anthropic API key (sk-ant-…)'});
-	await assert.rejects(provider.write('login1', 'login', '{"x":1}', me), /Not a Claude Code login/);
 	await raw.setDisabled('key1', true);
 	assert.equal(await provider.read('key1', 'key', me), undefined);
-	await provider.write('tok1', 'token', undefined, me);
-	assert.equal(await provider.read('tok1', 'token', me), undefined);
-	await provider.remove('login1', me);
-	await assert.rejects(provider.read('login1', 'login', me), /does not exist/);
+	await provider.write('key2', 'key', undefined, me);
+	assert.equal(await provider.read('key2', 'key', me), undefined);
+	await provider.remove('key3', me);
+	await assert.rejects(provider.read('key3', 'key', me), /does not exist/);
 	assert.equal(refreshed(), 3);
 });
 
@@ -120,17 +117,17 @@ test('a module cannot create SSH accounts', async () => {
 
 test('a read grant cannot write, create or remove; effective access is min(declared, granted)', async () => {
 	const {provider, grants} = await setup();
-	await grants.allow('claude', {'anthropic-key': 'read', 'anthropic-token': 'write'});
-	const me = caller({'anthropic-key': 'write', 'anthropic-token': 'read'});
+	await grants.allow('claude', {'anthropic-key': 'read', github: 'write'});
+	const me = caller({'anthropic-key': 'write', github: 'read'});
 	assert.equal(await provider.read('key1', 'key', me), KEY);
 	await assert.rejects(provider.write('key1', 'key', KEY, me), {code: 'CREDENTIAL_ACCESS', message: 'claude may not change credentials. Allow it (only you can, not an assistant): account grant claude'});
 	await assert.rejects(provider.remove('key1', me), {code: 'CREDENTIAL_ACCESS'});
 	await assert.rejects(provider.create({name: 'k2', kind: 'anthropic-key'}, me), {code: 'CREDENTIAL_ACCESS'});
-	assert.equal(await provider.read('tok1', 'token', me), TOKEN);
-	await assert.rejects(provider.write('tok1', 'token', TOKEN, me), {code: 'CREDENTIAL_ACCESS'}, 'declared read caps a write grant');
+	assert.equal(await provider.read('gh', 'token', me), 'ghp_' + 'g'.repeat(36));
+	await assert.rejects(provider.write('gh', 'token', 'ghp_' + 'h'.repeat(36), me), {code: 'CREDENTIAL_ACCESS'}, 'declared read caps a write grant');
 	assert.deepEqual(await provider.grants(me), [
 		{kind: 'anthropic-key', declared: 'write', granted: 'read'},
-		{kind: 'anthropic-token', declared: 'read', granted: 'read'},
+		{kind: 'github', declared: 'read', granted: 'read'},
 	]);
 });
 
@@ -170,9 +167,9 @@ test('one audit record per call, metadata only: no value, no length', async () =
 	await grants.allow('claude', {...all});
 	const me = caller(all);
 	await provider.read('key1', 'key', me);
-	await provider.write('tok1', 'token', TOKEN, me);
-	await provider.create({name: 'login1', kind: 'claude-login'}, me);
-	await provider.write('login1', 'login', LOGIN, me);
+	await provider.write('key2', 'key', KEY2, me);
+	await provider.create({name: 'key3', kind: 'anthropic-key'}, me);
+	await provider.write('key3', 'key', KEY2, me);
 	await provider.read('ghost', 'key', me).catch(() => undefined);
 	await provider.list(undefined, me);
 	const audit = records.filter(r => r.msg === 'credential access');
@@ -180,6 +177,6 @@ test('one audit record per call, metadata only: no value, no length', async () =
 	assert.deepEqual(audit[0]!.fields, {module: 'claude', op: 'read', kind: 'anthropic-key', account: 'key1', outcome: 'ok'});
 	assert.deepEqual(audit[4]!.fields, {module: 'claude', op: 'read', account: 'ghost', outcome: 'missing'});
 	const text = JSON.stringify(records);
-	for (const secret of [KEY, TOKEN, LOGIN, 'Acc3ss_', 'Refr3sh_']) assert.ok(!text.includes(secret));
+	for (const secret of [KEY, KEY2]) assert.ok(!text.includes(secret));
 	assert.ok(audit.every(r => !Object.keys(r.fields!).some(k => /length|size|value/i.test(k))));
 });

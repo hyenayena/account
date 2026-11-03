@@ -62,22 +62,11 @@ test('secrets are stored encrypted (v2), 0600, and read back in memory', async (
 test('a secret is validated by its kind; size caps hold', async () => {
 	const store = createStore(await tmp());
 	await store.add({name: 'key', kind: kind('anthropic-key')});
-	await store.add({name: 'tok', kind: kind('anthropic-token')});
-	await store.add({name: 'cl', kind: kind('claude-login'), fields: {email: 'me@example.com', method: 'claude.ai'}});
 	await store.add({name: 'pay', kind: stripe});
 	await assert.rejects(store.setSecret('key', 'key', 'not-a-key'), {message: 'Not an Anthropic API key (sk-ant-…)'});
 	await assert.rejects(store.setSecret('key', 'key', 'sk-ant-oat01-' + 'a'.repeat(30)), /Not an Anthropic API key/);
 	await store.setSecret('key', 'key', 'sk-ant-api03-' + 'b'.repeat(30));
-	await assert.rejects(store.setSecret('tok', 'token', 'sk-ant-api03-' + 'c'.repeat(30)), {message: 'Not an Anthropic subscription token (sk-ant-oat…)'});
-	await store.setSecret('tok', 'token', 'sk-ant-oat01-' + 'd'.repeat(30));
-	await assert.rejects(store.setSecret('cl', 'login', '{"x":1}'), /Not a Claude Code login/);
-	const blob = JSON.stringify({credentials: {claudeAiOauth: {accessToken: 'e'.repeat(40), refreshToken: 'f'.repeat(40)}}, pad: 'g'.repeat(20_000)});
-	await store.setSecret('cl', 'login', blob);
-	assert.equal(await store.secret('cl', 'login'), blob);
 	await assert.rejects(store.setSecret('pay', 'token', 'x'.repeat(8193)), /1 to 8192 characters/);
-	await assert.rejects(store.add({name: 'bad', kind: kind('claude-login'), fields: {method: 'web'}}), /Invalid method/);
-	const values = await store.allSecretValues();
-	assert.ok(values.includes('e'.repeat(40)) && values.includes('f'.repeat(40)), 'tokens inside a login blob are masked one by one');
 });
 
 test('fields are checked against the kind; secrets are refused as plain fields', async () => {

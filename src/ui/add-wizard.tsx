@@ -1,7 +1,7 @@
 import React, {useRef, useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 import type {MountControl, UiElement} from '../../../../src/api.js';
-import {isManagedKind, missingOf, type Kind, type Kinds} from '../kinds.js';
+import {missingOf, type Kind, type Kinds} from '../kinds.js';
 import {checkFields, NAME, type Account, type Store} from '../store.js';
 import {colorEnabled, ListPicker, SecretInput, TextField, useViewHost} from './kit.js';
 
@@ -95,7 +95,7 @@ function Failed({control, message}: {control: MountControl; message: string}) {
 function Wizard({control, deps}: {control: MountControl; deps: WizardDeps}) {
 	const {store, kinds} = deps;
 	const [step, setStep] = useState<Step>({at: 'kind'});
-	const all = useRef(kinds.listSync().filter(k => !isManagedKind(k))).current;
+	const all = useRef(kinds.listSync()).current;
 	const cancel = () => control.close();
 	const host = control.host ? {host: control.host} : {};
 
@@ -114,7 +114,7 @@ function Wizard({control, deps}: {control: MountControl; deps: WizardDeps}) {
 		}
 	};
 
-	const secretFields = (kind: Kind) => kind.fields.filter(f => f.secret && !f.managed);
+	const secretFields = (kind: Kind) => kind.fields.filter(f => f.secret);
 
 	const nextSecret = (kind: Kind, account: Account, index: number, saved: string[]) => {
 		if (index < secretFields(kind).length) setStep({at: 'secret', kind, account, index, saved});

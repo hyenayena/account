@@ -2,8 +2,8 @@ import {readFileSync} from 'node:fs';
 import {mkdir, readFile, rename, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
-export type SecretCheck = 'anthropic-key' | 'anthropic-token' | 'claude-login';
-export type Field = {key: string; secret: boolean; required: boolean; check?: SecretCheck; managed?: boolean};
+export type SecretCheck = 'anthropic-key';
+export type Field = {key: string; secret: boolean; required: boolean; check?: SecretCheck};
 export type Kind = {name: string; fields: Field[]; ssh: boolean; oneOf: string[][]; builtin: boolean};
 
 export const KIND_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -32,27 +32,10 @@ export const BUILTIN_KINDS: Kind[] = [
 		oneOf: [],
 		builtin: true,
 	},
-	{
-		name: 'anthropic-token',
-		fields: [{key: 'token', secret: true, required: true, check: 'anthropic-token'}],
-		ssh: false,
-		oneOf: [],
-		builtin: true,
-	},
-	{
-		name: 'claude-login',
-		fields: [
-			{key: 'email', secret: false, required: false},
-			{key: 'method', secret: false, required: false},
-			{key: 'login', secret: true, required: true, check: 'claude-login', managed: true},
-		],
-		ssh: false,
-		oneOf: [],
-		builtin: true,
-	},
 ];
 
-export const isManagedKind = (kind: Kind): boolean => kind.fields.some(f => f.required && f.managed === true);
+export const RETIRED_KINDS = ['anthropic-token', 'claude-login'] as const;
+const isRetired = (name: string) => (RETIRED_KINDS as readonly string[]).includes(name);
 
 export const DEFAULT_KIND = 'github';
 
@@ -123,7 +106,7 @@ const fromFile = (raw: unknown): Kind[] => {
 	if (!Array.isArray(kinds)) return [];
 	return kinds
 		.filter(validStored)
-		.filter(k => !BUILTIN_KINDS.some(b => b.name === k.name))
+		.filter(k => !BUILTIN_KINDS.some(b => b.name === k.name) && !isRetired(k.name))
 		.map(k => {
 			const fields = k.fields.map(f => ({key: f.key, secret: f.secret, required: f.required === true}));
 			const oneOf = (k.oneOf ?? []).filter(g => g.every(key => fields.some(f => f.key === key)));
@@ -179,6 +162,7 @@ export function createKinds(dataDir: string) {
 			} else if (specs[i]!.startsWith('--')) throw new Error(`Unknown option "${specs[i]!.slice(0, 40)}"`);
 			else fieldSpecs.push(specs[i]!);
 		}
+		if (isRetired(name)) throw new Error(`Kind "${name}" is retired and cannot be added`);
 		const fields = parseFields(fieldSpecs);
 		if (groupSpecs.length > MAX_GROUPS) throw new Error(`A kind has at most ${MAX_GROUPS} --one-of groups`);
 		const oneOf = groupSpecs.map(g => parseGroup(g, fields, false));
