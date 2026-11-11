@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {existsSync, readdirSync, readFileSync, statSync, writeFileSync, type Dirent} from 'node:fs';
-import {tmpdir} from 'node:os';
 import {chmod, mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {test} from 'node:test';
@@ -127,10 +126,10 @@ test('the key reaches the agent decrypted on stdin only', async () => {
 test('with the real ssh-agent, git signs through the agent and a disabled account loses it; no plaintext key file ever appears', async () => {
 	const data = await tmp();
 	const store = createStore(data);
-	const watched = [data, tmpdir(), agentDirFor(data)];
+	const dir = path.join(await tmp(), 'agents');
+	const watched = [data, agentDirFor(data), dir];
 	const before = new Set(watched.flatMap(d => filesWithKeys(d)));
 	const bot = await store.add({name: 'bot', kind: github});
-	const dir = path.join(await tmp(), 'agents');
 	const agents = createAgents({dir, privateKey: n => store.privateKey(n)});
 	try {
 		await agents.sync([bot]);
