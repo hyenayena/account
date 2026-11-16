@@ -96,6 +96,8 @@ None.
 
 ## Data
 
+Export (`yena.json` `export.deny`): `**`, nothing here is ever exported; every file is a credential or its index.
+
 Under `<YENA_DATA>/account` (dir 0700; files 0600, written atomically through an exclusive temp file):
 - `accounts.json`: `{v: 2, accounts: [{name, kind, fields: {public…}, publicKey?, fingerprint?, createdAt}]}` (version 1 of 0.1.0, GitHub only, is read as kind `github`).
 - `kinds.json`: `{v: 1, kinds: [{name, fields: [{key, secret, required}], oneOf?}]}` (built-in kinds are not stored).
