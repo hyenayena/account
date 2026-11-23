@@ -3,3 +3,6 @@
 /src/vault.ts
 /src/store.ts
 /src/grants.ts
+
+[deny export]
+@**
